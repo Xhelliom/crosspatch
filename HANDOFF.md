@@ -4,13 +4,31 @@ Ce document est le point de reprise. Lis-le en entier avant de toucher au code,
 puis lis `CLAUDE.md` pour les invariants — ils ne sont pas négociables et
 plusieurs sont contre-intuitifs.
 
-## Avertissement principal
+## État au 2026-08-23 (session Claude Code n°1)
 
-**Rien de ce code n'a jamais été exécuté.** Il a été écrit en une session de
-conception, la syntaxe est validée, la logique ne l'est pas. Les dépendances
-n'ont pas été installées, aucun appel API n'a été fait, aucun sandbox n'a
-tourné. Traite-le comme une architecture posée, pas comme un logiciel qui
-marche. La liste de bugs plus bas n'est pas exhaustive.
+Le code de conception a été importé dans le dépôt, puis **exécuté pour la
+première fois**. L'avertissement d'origine (« rien de ce code n'a jamais
+tourné ») ne vaut plus pour ce qui est listé ci-dessous, et vaut toujours
+intégralement pour le reste.
+
+**Ce qui tourne vraiment, vérifié :**
+
+- le harness, seul, sans agents → `pass_rate: 1.0` avec des solutions écrites
+  à la main, `0.0` avec un agent qui lève (étape 1 de l'ordre de travail) ;
+- l'API : tous les endpoints, sur un serveur réel ;
+- l'UI : chargée dans Chromium en 390×844 contre cette API, panneau, onglets,
+  ajout et arbitrage de direction, pause / reprise, aller-retour HTTP complet ;
+- le serveur MCP : charge et expose ses huit outils ;
+- 73 tests, dont la parité UI ↔ MCP ↔ HTTP de l'invariant 6.
+
+**Ce qui n'a toujours jamais tourné, faute de clés d'API :**
+
+- tout appel à OpenRouter — `orchestrator/llm.py`, `orchestrator/agent.py` ;
+- tout démarrage de sandbox E2B — `orchestrator/sandbox.py` ;
+- donc aucune génération réelle, aucun tour complet, aucun `pass_rate` d'agent.
+
+Ce sont exactement les **étapes 2 et 4** de l'ordre de travail. Elles restent
+à faire, dans cet ordre, et rien ne devrait avancer avant l'étape 2.
 
 ## Ce que c'est
 
@@ -33,100 +51,110 @@ observés) puis implémentation (un diff unique sur l'item le mieux classé).
 
 | Fichier | État |
 |---|---|
-| `kernel/guard.py` | écrit, non testé. Heuristiques à calibrer. |
-| `kernel/archive.py` | écrit, non testé. Schéma SQLite complet. |
-| `orchestrator/loop.py` | écrit, non testé. **Contient le bug bloquant n°1.** |
-| `orchestrator/agent.py` | agent graine, volontairement naïf — ne pas améliorer à la main |
-| `orchestrator/llm.py` | client OpenRouter, non testé |
-| `orchestrator/sandbox.py` | client E2B, **surface d'API non vérifiée** |
-| `orchestrator/backlog.py` | écrit, non testé |
-| `orchestrator/directions.py` | écrit, non testé |
-| `orchestrator/prompts/` | `ideator.md` + `proposer.md`, jamais évalués sur un vrai modèle |
-| `api/main.py` | écrit, non testé. **Bug bloquant n°1 ici aussi.** |
-| `api/static/index.html` | UI mobile, mise en page seulement — jamais branchée |
-| `mcp/server.py` | écrit, non testé |
-| `harness/` | 3 tâches avec fuzz tests. Difficulté réelle inconnue. |
+| `kernel/guard.py` | corrigé (bug 7), 17 tests. Heuristiques resserrées, pas supprimées. |
+| `kernel/archive.py` | table `control` ajoutée, `get(gen_id)` et `awaiting()` ajoutés. Testé. |
+| `orchestrator/loop.py` | réécrit : plan de contrôle en base, résilience par tour. Testé sans LLM. |
+| `orchestrator/agent.py` | agent graine, volontairement naïf — ne pas améliorer à la main. **Jamais exécuté.** |
+| `orchestrator/llm.py` | inchangé. **Jamais exécuté** — le calcul du coût depuis `usage.cost` reste à vérifier. |
+| `orchestrator/sandbox.py` | réécrit contre le SDK E2B réel. **Jamais exécuté contre un vrai sandbox.** |
+| `orchestrator/backlog.py` | `apply_patch` ne lève plus, `promote`/`rollback` testés sur un vrai dépôt. |
+| `orchestrator/directions.py` | inchangé, exercé par l'UI et l'API. |
+| `orchestrator/prompts/` | inchangés. **Jamais évalués sur un vrai modèle** — c'est l'étape 4. |
+| `api/main.py` | réécrit : n'exécute plus rien, dépose des intentions. Testé. |
+| `api/static/index.html` | complété (panneau backlog / directions / contrôle), branché et vérifié en navigateur. |
+| `mcp/server.py` | porté sur le SDK MCP 2.0 (`MCPServer`). Charge, huit outils. |
+| `harness/` | 3 tâches, validées solvables. **Difficulté réelle face à un modèle : toujours inconnue.** |
+| `tests/` | 73 tests. Hors `guard.MUTABLE` : les agents ne peuvent pas les patcher. |
 
-## Bugs connus, par ordre de blocage
+## Bugs de la passation — état
 
-### 1. L'API et le worker ne partagent pas de mémoire — BLOQUANT
+| # | Sujet | État |
+|---|---|---|
+| 1 | API et worker sans mémoire partagée | **corrigé** — table `control(key,value)`, l'API écrit, le worker exécute |
+| 2 | Workspaces pas des dépôts git | **n'était pas un bug** — `git apply` ne réclame aucun dépôt (vérifié). Le vrai blocage était voisin, voir ci-dessous |
+| 3 | La clé OpenRouter n'entre pas dans le sandbox | **corrigé** — `AGENT_OPENROUTER_API_KEY` via `create(envs=…)`, sans repli sur la clé de l'orchestrateur |
+| 4 | Surface E2B non vérifiée | **corrigé** — voir plus bas, deux hypothèses étaient fausses |
+| 5 | `bl.close()` visait la mauvaise génération | **corrigé** — `archive.get(gen_id)`, avec test de régression |
+| 6 | Coût sandbox jamais compté | **corrigé** — durée réelle × `sandbox_usd_per_hour`, facturé même en cas de crash |
+| 7 | `SUSPICIOUS` trop large | **corrigé** — resserré, pas supprimé ; 6 faux positifs documentés par des tests |
+| 8 | `/control rollback` renvoyait 501 | **corrigé** — `git revert` puis push, jamais `reset` |
 
-`api/main.py` référence `_loop.paused` et `_loop.human_verdict()`, mais l'API
-et le worker sont **deux conteneurs distincts** dans `docker-compose.yml`.
-`_loop` vaut `None` côté API : tout appel à `/verdict` ou `/control` plante.
+### Ce que la vérification de la surface E2B a donné
 
-Correction attendue : sortir l'état de contrôle en base. Ajoute une table
-`control(key, value)` dans `kernel/archive.py`, l'API écrit
-`paused/stop/verdict`, le worker la relit à chaque itération de boucle. Le
-worker devient la seule chose qui exécute ; l'API ne fait qu'écrire des
-intentions. Ne réponds pas à ce problème en fusionnant les deux services : la
-séparation web / worker est ce qui permet le scale-to-zero en cloud.
+Deux hypothèses de la passation étaient fausses, et une troisième manquait :
 
-### 2. Les workspaces ne sont pas des dépôts git — BLOQUANT
+- `Sandbox(template=…)` **n'existe pas** : le constructeur sert à se rattacher
+  à un sandbox existant. C'est `Sandbox.create(template=…, envs=…)` qui démarre.
+- `commands.run()` **lève** `CommandExitException` sur code de retour non nul.
+  Le rattrapage `json.JSONDecodeError` prévu ne pouvait jamais s'exécuter : un
+  harness qui plante tuait le worker.
+- `files.write(path, bytes)` et `on_stdout=` étaient corrects.
+- Le template `base` n'a effectivement ni `pytest` ni `httpx` : un bootstrap
+  les installe au démarrage. Un template dédié économiserait ~20 s par éval —
+  `sandbox_bootstrap: ""` dans `config.yaml` une fois qu'il existe.
 
-`backlog.apply_patch()` fait `git apply` dans `workspaces/A|B`, mais `Loop.__init__`
-crée ces dossiers par `shutil.copytree` sans `git init`. Le patch échouera.
+### Bugs trouvés en plus, non listés dans la passation
 
-### 3. La clé OpenRouter n'entre pas dans le sandbox — BLOQUANT
+1. **`apply_patch` tuait le worker.** `check=True` faisait remonter une
+   `CalledProcessError` jusqu'à `run()`, qui ne rattrape que `Budget`. Or un
+   diff mal formé est le cas *normal* avec un modèle milieu de gamme. Renvoie
+   désormais `(ok, stderr)`, et le message de git repart en contexte.
+2. **Un tour raté tuait le worker.** Même schéma pour `chat_json` quand le
+   modèle rate le JSON strict deux fois. `CLAUDE.md` dit qu'on doit marquer la
+   génération `failed` — encore faut-il que le worker survive pour l'écrire.
+   Trois tours ratés d'affilée arrêtent proprement, avec la raison dans le fil.
+3. **`mcp/server.py` ne pouvait pas démarrer.** `mcp.server.fastmcp` a disparu
+   du SDK 2.0 (`FastMCP` → `MCPServer`), et `python -m mcp.server` lance le SDK
+   et non ce fichier — un paquet régulier l'emporte toujours sur un
+   paquet-espace-de-noms. Se lance par `python mcp/server.py`.
+4. **Les workspaces ne couvraient qu'`orchestrator/`** alors que `guard.MUTABLE`
+   autorise aussi `api/` et `mcp/` : un patch parfaitement légitime y était
+   accepté par le garde-fou, puis inapplicable faute de fichier cible.
+5. **`harness/manifest.yaml` listait `reverse_words`**, une tâche inexistante,
+   et ignorait les trois vraies. Un test verrouille désormais le miroir.
+6. **`subprocess.TimeoutExpired` n'était pas rattrapée** dans `harness/run.py` :
+   une tâche partie en boucle emportait toute l'évaluation.
 
-`orchestrator/agent.py` lit `OPENROUTER_API_KEY`, mais `sandbox.Runner.evaluate()`
-ne passe aucune variable d'environnement au sandbox E2B. L'agent évalué ne
-pourra appeler aucun modèle. Passe la clé à la création du sandbox — et pense
-au fait que tu injectes un secret dans un environnement qui exécute du code
-généré : plafond bas sur cette clé, distincte de celle de l'orchestrateur.
+### Deux décisions prises qui méritent ton avis
 
-### 4. Surface d'API E2B non vérifiée
+- **La boucle attend tant qu'un arbitrage humain est en attente.** Sinon A et B
+  continuent de patcher un code que tu n'as pas laissé avancer : doublons
+  garantis et budget brûlé. C'est un changement de comportement, pas une
+  correction de bug.
+- **Deux gates, deux statuts.** `awaiting_gate` (autoriser l'évaluation d'un
+  patch jugé sensible) et `awaiting_human` (intégrer un patch déjà mesuré).
+  « Oui » ne voulait pas dire la même chose dans les deux cas, et le code
+  d'origine les confondait — un `ok` sur un patch jamais évalué aurait promu
+  un candidat inexistant.
 
-`Sandbox(template=...)`, `files.write()` avec des bytes, `commands.run(on_stdout=)` :
-tout ça vient de la mémoire, pas de la doc. Vérifie contre le SDK réel avant
-de débugger le reste. Le template `base` n'a probablement ni `pytest` ni
-`httpx` — il faut soit les installer au démarrage, soit construire un template
-dédié.
+## Ce qui reste, dans l'ordre
 
-### 5. `bl.close()` cible la mauvaise génération
+1. **Étape 2 — une seule évaluation de l'agent graine en sandbox.** Il faut
+   `E2B_API_KEY` et `AGENT_OPENROUTER_API_KEY`. Objectif : un `pass_rate` entre
+   **0.33 et 0.66**. Si c'est 1.00 les tâches sont trop faciles et l'expérience
+   n'a plus d'objet ; si c'est 0.00 quelque chose est cassé. Ne va pas plus loin
+   avant.
 
-Dans `Loop.human_verdict()`, `self.archive.recent(...)[0]` prend la plus
-récente, pas celle dont on valide le verdict. Ajoute un `get(gen_id)` à
-l'archive et utilise-le.
+   Note utile pour lire le résultat : les trois tâches ont été résolues à la
+   main pour valider le harness, et `rle` est nettement la plus dure — un
+   encodage naïf est ambigu dès qu'un chiffre apparaît dans l'entrée, il faut
+   l'échapper. Un agent graine qui rendrait 0.66 en ratant `rle` serait
+   exactement dans la fenêtre visée.
 
-### 6. Le coût sandbox n'est jamais compté
-
-`sandbox._estimate()` renvoie `0.0`. Le plafond `max_usd` ne couvre donc que
-les tokens LLM. À brancher sur la durée réelle × tarif vCPU.
-
-### 7. `guard.SUSPICIOUS` va produire beaucoup de faux positifs
-
-Le motif `subprocess|os\.system|eval\(|exec\(` déclenchera sur des
-améliorations parfaitement légitimes de l'agent. C'est délibéré — un faux
-positif coûte un tour, un faux négatif coûte l'expérience. Mais si tout remonte
-en revue humaine, calibre. Ne supprime pas le motif : resserre-le.
-
-### 8. `/control` avec `rollback` renvoie 501
-
-À brancher sur `git revert` de la génération visée.
-
-## Ordre de travail proposé
-
-1. **Faire tourner le harness seul, sans agents.** Écris un `solve()` bidon qui
-   copie une solution correcte écrite à la main, et vérifie que
-   `harness/run.py` sort bien son JSON avec `pass_rate: 1.0`. Ça valide le
-   harness indépendamment de tout le reste.
-2. Corriger les bugs 2, 3, 4 et faire tourner **une seule évaluation** de
-   l'agent graine en sandbox. Objectif : un `pass_rate` entre **0.33 et 0.66**.
-   Si c'est 1.00 les tâches sont trop faciles et l'expérience n'a plus d'objet ;
-   si c'est 0.00 quelque chose est cassé. Ne va pas plus loin avant.
-3. Corriger le bug 1 (état de contrôle en base), puis brancher l'UI et vérifier
-   que `/state`, `/stream` et `/verdict` fonctionnent de bout en bout.
-4. Faire tourner **un tour complet** : idéation → 2-4 tâches dans le backlog →
+2. **Étape 4 — un tour complet** : idéation → 2-4 tâches dans le backlog →
    diff → sandbox → verdict. Lis les tâches produites : citent-elles de vrais
    échecs, ou est-ce du générique type « ajouter de la gestion d'erreur » ? Si
    c'est générique, le problème est dans `prompts/ideator.md` ou dans le choix
    du modèle — corrige là, pas ailleurs.
-5. Bugs 5, 6, 7, 8.
-6. Compléter l'UI : directions, backlog, pause / reprise, taux d'acceptation.
-   **Chaque ajout d'UI impose l'endpoint et l'outil MCP correspondants dans le
-   même commit** — voir la table de parité dans `CLAUDE.md`, quatre lignes y
-   sont encore marquées « à faire ».
+
+3. **`tokens_per_task` n'est jamais mesuré** : `harness/run.py` renvoie `0.0`
+   en dur. C'est une métrique secondaire de `OBJECTIVE.md` et la cible de
+   DIR-002 — tant qu'elle vaut zéro, aucune idée de réduction de coût n'est
+   falsifiable. À brancher avant d'attendre quoi que ce soit de DIR-002.
+
+4. **Le coût LLM vient de `usage.cost` d'OpenRouter**, jamais vérifié contre
+   une vraie réponse. Si le champ est absent, `max_usd` ne protège plus rien :
+   à contrôler au premier appel réel.
 
 ## L'UI responsive est un travail humain, pas une tâche d'agent
 
@@ -169,8 +197,8 @@ git status --short | grep -E '\.env$|\.db$' && echo "NE PAS POUSSER"
 
 `.gitignore` couvre `.env`, `data/`, `workspaces/`, `candidates/`, `*.db`.
 Le worker fait `git push` après validation : utilise un PAT fine-grained limité
-à ce seul dépôt, et fais-le pousser sur une branche `evolution/*`, jamais sur
-`main`.
+à ce seul dépôt. Il pousse sur `evolution/<run_id>`, jamais sur `main` — c'est
+câblé dans `backlog.promote()` et vérifié par un test.
 
 ## Choix du langage — Python maintenant, TS peut-être plus tard
 

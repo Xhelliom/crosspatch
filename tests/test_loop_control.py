@@ -136,3 +136,55 @@ def test_rollback_est_consomme(loop, monkeypatch):
     lo._drain_control()
     assert appels == [(gen_id, "1")]
     assert lo.archive.pending("rollback:") == []
+
+
+# --- résilience : un tour raté ne tue pas le worker ------------------------
+
+def test_un_tour_rate_est_archive_et_la_boucle_continue(loop, monkeypatch):
+    """`chat_json` peut lever si le modèle rate le JSON strict deux fois.
+
+    CLAUDE.md le dit : « on marque la génération failed, c'est une donnée sur
+    le modèle ». Encore faut-il que le worker soit encore là pour le lire.
+    """
+    import json
+    lo, _, _ = loop
+    tours = []
+
+    def ideate_qui_rate(p, t):
+        tours.append(p)
+        raise json.JSONDecodeError("pas du JSON", "", 0)
+
+    monkeypatch.setattr(lo, "_ideate", ideate_qui_rate)
+    monkeypatch.setattr(lo, "_turn", lambda p, t: None)
+    lo.run()
+
+    from orchestrator.loop import MAX_ECHECS
+    assert len(tours) == MAX_ECHECS               # s'arrête, ne boucle pas à vide
+    fil = [e["body"] for e in lo.archive.transcript()]
+    assert any("tour 0 raté (JSONDecodeError)" in b for b in fil)
+    assert any("tours ratés d'affilée" in b for b in fil)
+
+
+def test_le_compteur_d_echecs_se_remet_a_zero(loop, monkeypatch):
+    import json
+    lo, _, _ = loop
+    appels = []
+
+    def ideate(p, t):
+        appels.append(p)
+        if len(appels) in (1, 3):
+            raise json.JSONDecodeError("raté", "", 0)
+        if len(appels) >= 5:
+            lo.archive.set_control("stop", "1")
+
+    monkeypatch.setattr(lo, "_ideate", ideate)
+    monkeypatch.setattr(lo, "_turn", lambda p, t: None)
+    lo.run()
+    assert len(appels) >= 5      # deux échecs non consécutifs n'arrêtent rien
+
+
+def test_un_arret_demande_est_respecte(loop):
+    lo, _, _ = loop
+    lo.archive.set_control("stop", "1")
+    lo.run()                      # ne doit pas boucler
+    assert any("Arrêt demandé" in e["body"] for e in lo.archive.transcript())

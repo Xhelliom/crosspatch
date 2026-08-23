@@ -36,7 +36,8 @@ PROMPTS = ROOT / "orchestrator" / "prompts"
 BACKLOG = ROOT / "mission" / "BACKLOG.yaml"
 DIRS = ROOT / "mission" / "DIRECTIONS.yaml"
 
-IDLE = 2.0  # seconde(s) entre deux relectures du plan de contrôle
+IDLE = 2.0        # seconde(s) entre deux relectures du plan de contrôle
+MAX_ECHECS = 3    # tours ratés d'affilée avant de rendre la main
 
 
 class Loop:
@@ -53,6 +54,7 @@ class Loop:
         self.objective = (ROOT / "mission" / "OBJECTIVE.md").read_text()
         self.baseline = guard.fingerprint(ROOT)
         self.dup_streak = 0
+        self.echecs = 0
         self.last_failures: list[dict] = []
         # A et B partent identiques : c'est la prémisse de l'expérience.
         self.ws = {r: ROOT / "workspaces" / r for r in ("A", "B")}
@@ -144,6 +146,23 @@ class Loop:
             except Budget as e:
                 self.archive.say(None, "system", "error", str(e))
                 return
+            except Exception as e:                       # noqa: BLE001
+                # Un modèle moyen rate parfois le JSON strict, et le réseau
+                # tombe. C'est une donnée sur le modèle, pas un incident à
+                # masquer — mais ça ne doit pas tuer le worker en silence :
+                # je pilote depuis le téléphone, le seul canal de diagnostic
+                # est le fil.
+                self.echecs += 1
+                self.archive.say(None, "system", "error",
+                                 f"tour {turn} raté ({type(e).__name__}) : {e} "
+                                 f"[{self.echecs}/{MAX_ECHECS}]")
+                if self.echecs >= MAX_ECHECS:
+                    self.archive.say(None, "system", "error",
+                                     f"{MAX_ECHECS} tours ratés d'affilée — arrêt.")
+                    return
+                turn += 1
+                continue
+            self.echecs = 0
             turn += 1
 
     # ------------------------------------------------------------ idéation

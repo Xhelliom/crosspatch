@@ -15,10 +15,25 @@ naturel et auditable, et les agents génèrent eux-mêmes leur backlog de tâche
 ## Démarrer
 
 ```bash
-cp .env.example .env        # OPENROUTER_API_KEY, E2B_API_KEY
+cp .env.example .env        # OPENROUTER_API_KEY, AGENT_OPENROUTER_API_KEY, E2B_API_KEY
 openssl rand -hex 32        # → CONTROL_TOKEN
 docker compose up
 ```
+
+Deux clés OpenRouter, pas une : celle de l'orchestrateur, et celle de l'agent
+évalué, injectée dans le sandbox. Cette seconde clé vit dans un environnement
+qui exécute du code écrit par un modèle — plafond bas, et jamais la même.
+
+## Vérifier
+
+```bash
+pip install -r requirements.txt pytest
+pytest -q                   # 73 tests, aucun n'appelle d'API externe
+```
+
+`tests/test_harness.py` rejoue le harness avec des solutions écrites à la main
+et vérifie qu'il sort `pass_rate: 1.0`. Si celui-là échoue, aucune mesure de
+génération n'a de sens et il est inutile de débugger le reste.
 
 UI sur http://localhost:8080 — le fil de discussion et les boutons de validation.
 
