@@ -66,6 +66,15 @@ class Archive:
         Path(path).parent.mkdir(parents=True, exist_ok=True)
         self.db = sqlite3.connect(path, check_same_thread=False)
         self.db.row_factory = sqlite3.Row
+        # Deux conteneurs écrivent dans ce fichier : l'API à chaque requête,
+        # le worker en continu. Le délai d'attente sur verrou est explicite
+        # plutôt que laissé à la valeur par défaut — c'est une hypothèse de
+        # l'architecture, elle doit être lisible ici.
+        #
+        # Pas de WAL : il réclame de la mémoire partagée entre processus, ce
+        # que certains montages (bind mount Docker Desktop, NFS) ne rendent
+        # pas correctement. Le mode par défaut tient la charge mesurée.
+        self.db.execute("PRAGMA busy_timeout = 15000")
         self.db.executescript(SCHEMA)
         self.db.commit()
 

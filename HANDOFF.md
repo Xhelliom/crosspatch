@@ -156,6 +156,36 @@ Deux hypothèses de la passation étaient fausses, et une troisième manquait :
    une vraie réponse. Si le champ est absent, `max_usd` ne protège plus rien :
    à contrôler au premier appel réel.
 
+## Le déploiement cloud ne marche pas tel quel — à trancher
+
+`docker-compose.yml` monte `./data` dans **les deux** services : l'API et le
+worker partagent le fichier SQLite de l'archive. C'est ce qui fait
+fonctionner le plan de contrôle (l'API écrit des intentions, le worker les
+relit). En local, le bind mount le donne gratuitement.
+
+En cloud, non. Le stockage bloc des PaaS est mono-attachement : un volume
+Railway se monte sur **un seul** service, et Railway a dit ne pas prévoir de
+volumes partagés ; un volume Fly est lié à une seule machine. Deux services
+= deux disques = l'API écrirait des verdicts que le worker ne lirait jamais.
+
+Trois issues, par ordre de coût :
+
+1. **Postgres à la place de SQLite.** L'archive devient un service réseau que
+   les deux conteneurs joignent. C'est la réponse standard et la seule qui
+   préserve l'invariant « web et worker séparés ». Coût : réécrire les
+   requêtes de `kernel/archive.py` (surtout `json_extract`, qui n'existe pas
+   en Postgres) et rendre la connexion configurable pour garder SQLite en
+   local. Une centaine de lignes, dans un fichier du noyau.
+2. **SQLite en réseau** (Turso / libSQL). Beaucoup moins de SQL à changer,
+   mais un compte et une dépendance de plus.
+3. **Un seul service pour les deux processus.** Le moins de travail, et
+   `CLAUDE.md` l'interdit explicitement : la séparation est ce qui permet le
+   scale-to-zero. À ne faire que comme décision consciente, pas comme
+   contournement.
+
+Tant que ce n'est pas tranché, le seul chemin qui fonctionne de bout en bout
+est `docker compose up` en local.
+
 ## L'UI responsive est un travail humain, pas une tâche d'agent
 
 À dire explicitement parce que la tentation reviendra : rendre l'UI complète et
