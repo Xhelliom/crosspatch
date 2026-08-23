@@ -1,0 +1,32 @@
+# `.github/` est dans guard.PROTECTED : aucun agent ne peut toucher à ce
+# fichier. C'est voulu — le portail de vérification ne doit pas être
+# modifiable par ce qu'il vérifie.
+name: tests
+
+on:
+  push:
+    branches: [main, "evolution/**", "claude/**"]
+  pull_request:
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Installer les dépendances
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pytest
+
+      # Aucun `secrets:` dans ce job, et c'est la propriété qu'on veut :
+      # la suite ne fait aucun appel réseau. Le jour où un test réclame une
+      # clé, c'est qu'il est devenu un test d'intégration et qu'il a sa
+      # place ailleurs.
+      - name: Suite de tests
+        run: pytest -q

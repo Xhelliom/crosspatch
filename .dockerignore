@@ -1,0 +1,15 @@
+# L'image est un artefact qu'on pousse sur un registre : rien de local dedans.
+.env
+*.pem
+*.key
+data/
+workspaces/
+candidates/
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# `.git` est volontairement conservé : `backlog.promote()` commit et push
+# depuis /app après validation humaine. Sans lui, la promotion échoue.

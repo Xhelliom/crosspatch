@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -169,6 +170,32 @@ def _mirror(src: Path, dst: Path) -> None:
         shutil.rmtree(f, ignore_errors=True) if f.is_dir() else f.unlink()
 
 
+def _redact(text: str, token: str | None) -> str:
+    return text.replace(token, "***") if token else text
+
+
+def _push(root: Path, branch: str) -> None:
+    """Pousse HEAD sur `branch`, en gardant le jeton hors de portée.
+
+    Le jeton ne doit apparaître ni dans `argv` (lisible par n'importe quel
+    `ps` dans le conteneur), ni dans `.git/config` (qui finirait dans une
+    couche d'image). `GIT_ASKPASS` le passe par un canal que git seul lit,
+    et le message d'erreur est expurgé avant d'entrer dans l'archive.
+    """
+    token = os.environ.get("GIT_PUSH_TOKEN")
+    env = dict(os.environ)
+    if token:
+        askpass = root / ".git" / "crosspatch-askpass"
+        askpass.write_text('#!/bin/sh\nprintf %s "$GIT_PUSH_TOKEN"\n')
+        askpass.chmod(0o700)
+        env.update(GIT_ASKPASS=str(askpass), GIT_TERMINAL_PROMPT="0")
+
+    p = subprocess.run(["git", "push", "origin", f"HEAD:refs/heads/{branch}"],
+                       cwd=root, env=env, capture_output=True, text=True)
+    if p.returncode:
+        raise RuntimeError(f"git push : {_redact(p.stderr, token)[-500:]}")
+
+
 def promote(root: Path, gen_id: int, branch: str = "evolution/main") -> None:
     """Commit + push. Le redéploiement recharge le code, sans hot-patch.
 
@@ -182,8 +209,7 @@ def promote(root: Path, gen_id: int, branch: str = "evolution/main") -> None:
     subprocess.run(["git", "add", "-A"], cwd=root, check=True)
     subprocess.run(["git", "commit", "-m", f"gen {gen_id} (validée)"],
                    cwd=root, check=True)
-    subprocess.run(["git", "push", "origin", f"HEAD:refs/heads/{branch}"],
-                   cwd=root, check=True)
+    _push(root, branch)
 
 
 def find_commit(root: Path, gen_id: int) -> str | None:
@@ -208,6 +234,5 @@ def rollback(root: Path, gen_id: int, branch: str = "evolution/main") -> str:
     if sha is None:
         raise LookupError(f"aucun commit trouvé pour la génération {gen_id}")
     subprocess.run(["git", "revert", "--no-edit", sha], cwd=root, check=True)
-    subprocess.run(["git", "push", "origin", f"HEAD:refs/heads/{branch}"],
-                   cwd=root, check=True)
+    _push(root, branch)
     return sha

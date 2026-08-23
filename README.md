@@ -20,9 +20,30 @@ openssl rand -hex 32        # → CONTROL_TOKEN
 docker compose up
 ```
 
+## Secrets
+
+Le dépôt est public : rien ne va dans git, et un test le vérifie
+(`tests/test_secrets.py`). Cinq valeurs, et **trois destinations qui ne sont
+pas interchangeables** :
+
+| Où | Quoi | Pourquoi là |
+|---|---|---|
+| `.env` local | les cinq | lu par `docker compose`, ignoré par git |
+| Variables d'env de l'hébergeur (Railway, Fly…) | les cinq | c'est le seul endroit que le conteneur lit à l'exécution |
+| Secrets GitHub Actions | rien | la CI ne fait aucun appel réseau, elle n'en a besoin d'aucun |
+
+Le dernier point mérite d'être dit : les « secrets de dépôt » GitHub ne sont
+lus que par les workflows Actions. Les y poser ne donne rien à l'application —
+c'est l'hébergeur qui alimente le conteneur.
+
 Deux clés OpenRouter, pas une : celle de l'orchestrateur, et celle de l'agent
 évalué, injectée dans le sandbox. Cette seconde clé vit dans un environnement
 qui exécute du code écrit par un modèle — plafond bas, et jamais la même.
+
+`GIT_PUSH_TOKEN` est le plus sensible pour un dépôt public : il autorise le
+worker à pousser. PAT fine-grained, ce dépôt uniquement, `Contents: write`.
+Il passe par `GIT_ASKPASS`, donc jamais dans `argv` ni dans `.git/config`, et
+les erreurs de push sont expurgées avant d'entrer dans le fil.
 
 ## Vérifier
 
