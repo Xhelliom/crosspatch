@@ -1,0 +1,12 @@
+Écris un module exposant deux fonctions :
+
+    encode(s: str) -> str
+    decode(s: str) -> str
+
+`encode` applique un run-length encoding : chaque suite de caractères
+identiques devient le caractère suivi de sa longueur, mais uniquement si la
+suite fait 2 caractères ou plus. Un caractère isolé reste tel quel.
+Exemple : "aaabccd" -> "a3bc2d"
+
+`decode` est l'inverse exact. Les chiffres peuvent apparaître dans l'entrée
+de `encode` : "a11b" doit pouvoir faire un aller-retour sans perte.

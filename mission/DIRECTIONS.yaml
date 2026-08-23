@@ -1,0 +1,45 @@
+# Les grandes idées. Niveau intermédiaire entre la mission (gelée) et les
+# tâches (générées par l'IA).
+#
+# L'humain en pose la plupart et peut en ajouter en cours de run — c'est le
+# volant de direction. L'IA peut en proposer, mais une direction proposée
+# reste en `input_required` jusqu'à validation : elle ne s'auto-autorise pas
+# un nouvel axe de travail.
+#
+# Toute tâche du backlog doit être rattachée à une direction active.
+
+directions:
+  - id: DIR-001
+    title: "Donner à l'agent un retour d'exécution avant de rendre sa réponse"
+    intent: >
+      L'agent écrit sa solution à l'aveugle, sans jamais la voir échouer.
+      Explorer tout ce qui lui donne un signal avant de rendre.
+    state: active
+    author: human
+
+  - id: DIR-002
+    title: "Réduire le coût par tâche sans toucher au taux de réussite"
+    intent: >
+      Un gain de score payé par un triplement des tokens n'est pas un gain.
+      Explorer la compression de contexte, le court-circuit, le choix de modèle.
+    state: active
+    author: human
+
+  - id: DIR-003
+    title: "Structurer et resserrer la communication entre agents"
+    intent: >
+      Ce qu'un agent transmet à l'autre est aujourd'hui du texte libre : ses
+      observations, ce qu'il a vu échouer, ce qu'il en déduit. Explorer un
+      format structuré plutôt que narratif, une meilleure sélection de ce qui
+      vaut la peine d'être transmis, et l'élagage de ce qui n'aide pas le tour
+      suivant.
+
+      Un format structuré sert deux fins à la fois : l'agent d'en face le parse
+      mieux, et l'UI peut l'afficher proprement au lieu d'un pavé.
+
+      Métrique visée : `acceptance_rate` — part des propositions qui passent le
+      harness sans régression — à coût de tokens de communication constant ou
+      inférieur. Une amélioration de la communication qui n'augmente pas ce
+      taux n'en est pas une, quelle que soit l'élégance du format.
+    state: active
+    author: human

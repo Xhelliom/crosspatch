@@ -1,0 +1,8 @@
+run_id: "2026-08-23-001"
+model: "mistralai/mistral-medium-3.1"   # milieu de gamme : le headroom est le sujet
+archive_path: "data/archive.db"
+sandbox_template: "base"
+max_usd: 25.0            # plafond dur, vérifié avant chaque appel
+soak_runs: 3             # un bon score une fois, c'est du bruit
+plateau_window: 5
+dup_ratio_stop: 0.75     # part d'idées déjà connues qui signale la convergence

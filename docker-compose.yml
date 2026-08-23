@@ -1,0 +1,12 @@
+services:
+  api:
+    build: .
+    ports: ["8080:8080"]
+    env_file: .env
+    volumes: ["./data:/app/data"]
+  worker:
+    build: .
+    command: python -m orchestrator.loop
+    env_file: .env
+    volumes: ["./data:/app/data", "./workspaces:/app/workspaces"]
+    depends_on: [api]

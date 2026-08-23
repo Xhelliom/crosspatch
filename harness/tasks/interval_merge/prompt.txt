@@ -1,0 +1,9 @@
+Écris un module exposant :
+
+    merge(intervals: list[tuple[int, int]]) -> list[tuple[int, int]]
+
+Fusionne les intervalles qui se chevauchent ou se touchent, et renvoie la
+liste triée par borne inférieure. Les intervalles d'entrée peuvent être dans
+n'importe quel ordre et peuvent être mal formés (borne haute < borne basse) :
+dans ce cas, normalise-les. Les intervalles adjacents comme (1,2) et (2,5)
+fusionnent en (1,5). La liste vide renvoie une liste vide.

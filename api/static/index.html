@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#10131A">
+<title>crosspatch</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,800&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --ground:#10131A; --raised:#171B24; --edge:#242A36;
+  --a:#8B9AF5; --b:#58BFA6; --bone:#E8E4DA; --mute:#7A8395;
+  --alarm:#D9788C;
+  --mono:'JetBrains Mono',ui-monospace,monospace;
+  --display:'Bricolage Grotesque',system-ui,sans-serif;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{
+  background:var(--ground);color:var(--bone);font-family:var(--mono);
+  font-size:14px;line-height:1.5;
+  padding-bottom:calc(96px + env(safe-area-inset-bottom));
+  -webkit-font-smoothing:antialiased;
+}
+:focus-visible{outline:2px solid var(--bone);outline-offset:2px}
+
+/* ---- en-tête : le rail de lignée, l'élément signature ---- */
+header{
+  position:sticky;top:0;z-index:10;background:var(--ground);
+  border-bottom:1px solid var(--edge);
+  padding:14px 16px 10px;padding-top:calc(14px + env(safe-area-inset-top));
+}
+.brand{
+  display:flex;align-items:baseline;justify-content:space-between;gap:12px;
+  margin-bottom:12px;
+}
+.brand h1{
+  font-family:var(--display);font-weight:800;font-size:19px;
+  letter-spacing:-.02em;
+}
+.brand .run{font-size:11px;color:var(--mute)}
+
+/* chaque génération = une encoche. hauteur = pass_rate, couleur = proposeur */
+.rail{
+  display:flex;align-items:flex-end;gap:3px;height:44px;
+  border-bottom:1px solid var(--edge);overflow-x:auto;
+  scrollbar-width:none;padding-bottom:1px;
+}
+.rail::-webkit-scrollbar{display:none}
+.notch{flex:0 0 7px;border-radius:1px 1px 0 0;min-height:2px;transition:height .3s}
+.notch.A{background:var(--a)} .notch.B{background:var(--b)}
+.notch.dead{background:none;border:1px solid var(--edge);height:8px!important}
+.notch.wait{background:repeating-linear-gradient(45deg,var(--bone) 0 2px,transparent 2px 4px)}
+
+.readout{display:flex;gap:18px;margin-top:10px;font-size:11px}
+.readout div{display:flex;flex-direction:column;gap:1px}
+.readout span{color:var(--mute);letter-spacing:.06em;font-size:9px;text-transform:uppercase}
+.readout b{font-family:var(--display);font-weight:800;font-size:17px;letter-spacing:-.01em}
+.spend b{color:var(--bone)} .spend.hot b{color:var(--alarm)}
+
+/* ---- le fil ---- */
+main{padding:16px 16px 0;display:flex;flex-direction:column;gap:14px}
+.turn{max-width:86%;display:flex;flex-direction:column;gap:5px}
+.turn.A{align-self:flex-start}
+.turn.B{align-self:flex-end;text-align:right}
+.who{font-size:9px;letter-spacing:.14em;text-transform:uppercase;font-weight:700}
+.turn.A .who{color:var(--a)} .turn.B .who{color:var(--b)}
+.bubble{
+  background:var(--raised);border:1px solid var(--edge);
+  border-radius:12px;padding:11px 13px;text-align:left;
+}
+.turn.A .bubble{border-bottom-left-radius:3px}
+.turn.B .bubble{border-bottom-right-radius:3px}
+
+/* l'arbitre n'est pas un interlocuteur : il coupe le fil en deux */
+.verdictline{
+  display:flex;align-items:center;gap:10px;color:var(--mute);
+  font-size:11px;letter-spacing:.04em;
+}
+.verdictline::before,.verdictline::after{
+  content:"";flex:1;height:1px;background:var(--edge);
+}
+.verdictline b{color:var(--bone);font-weight:500}
+.verdictline.up b{color:var(--b)} .verdictline.down b{color:var(--alarm)}
+
+/* ---- barre de décision, uniquement quand ça attend ---- */
+.gate{
+  position:fixed;left:0;right:0;bottom:0;z-index:20;
+  background:var(--raised);border-top:1px solid var(--edge);
+  padding:12px 16px calc(12px + env(safe-area-inset-bottom));
+  transform:translateY(110%);transition:transform .25s ease;
+}
+.gate.open{transform:none}
+.gate p{font-size:11px;color:var(--mute);margin-bottom:9px}
+.gate p b{color:var(--bone);font-weight:500}
+.acts{display:grid;grid-template-columns:1.6fr 1fr 1fr 1fr;gap:7px}
+button{
+  font-family:var(--mono);font-size:11px;font-weight:500;color:var(--bone);
+  background:transparent;border:1px solid var(--edge);border-radius:9px;
+  padding:11px 4px;cursor:pointer;transition:background .15s,border-color .15s;
+}
+button:hover{background:#1E2330}
+button.go{border-color:var(--b);color:var(--b)}
+button.go:hover{background:rgba(88,191,166,.1)}
+
+.empty{color:var(--mute);font-size:12px;text-align:center;padding:44px 20px}
+.empty b{display:block;color:var(--bone);font-family:var(--display);
+  font-weight:500;font-size:15px;margin-bottom:6px}
+
+@media(prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="brand">
+    <h1>crosspatch</h1>
+    <div class="run" id="run">—</div>
+  </div>
+  <div class="rail" id="rail"></div>
+  <div class="readout">
+    <div><span>réussite</span><b id="score">—</b></div>
+    <div><span>génération</span><b id="gen">—</b></div>
+    <div class="spend" id="spendbox"><span>dépensé</span><b id="spend">—</b></div>
+  </div>
+</header>
+
+<main id="thread">
+  <div class="empty"><b>Rien à lire pour l'instant.</b>
+  Lance le worker : le fil apparaît ici, tour par tour.</div>
+</main>
+
+<div class="gate" id="gate">
+  <p id="gatetext"></p>
+  <div class="acts">
+    <button class="go" data-v="ok">Intégrer</button>
+    <button data-v="scope">Hors sujet</button>
+    <button data-v="risky">Risqué</button>
+    <button data-v="useless">Sans effet</button>
+  </div>
+</div>
+
+<script>
+const $ = s => document.querySelector(s);
+let token = sessionStorage.getItem("crosspatch_token");
+if (!token) { token = prompt("Jeton de contrôle") || ""; sessionStorage.setItem("crosspatch_token", token); }
+const H = { Authorization: "Bearer " + token };
+let pending = null, cursor = 0, seeded = false;
+
+async function poll() {
+  try {
+    const s = await (await fetch("/state", { headers: H })).json();
+    $("#run").textContent = s.run_id;
+    $("#score").textContent = s.best?.scores ? (JSON.parse(s.best.scores).pass_rate).toFixed(2) : "—";
+    $("#gen").textContent = s.recent.length ? "#" + s.recent[0].id : "—";
+    $("#spend").textContent = "$" + s.spent_usd.toFixed(2);
+    $("#spendbox").classList.toggle("hot", s.spent_usd > s.max_usd * 0.8);
+    drawRail(s.recent);
+    setGate(s.awaiting_human[0] || null);
+  } catch (e) { /* le worker peut être à l'arrêt : on réessaie */ }
+}
+
+function drawRail(recent) {
+  const rail = $("#rail");
+  rail.innerHTML = "";
+  [...recent].reverse().forEach(g => {
+    const n = document.createElement("div");
+    const dead = ["failed", "rejected"].includes(g.status);
+    const wait = g.status === "awaiting_human";
+    n.className = "notch " + g.role_proposer + (dead ? " dead" : wait ? " wait" : "");
+    const p = g.scores ? JSON.parse(g.scores).pass_rate : 0;
+    n.style.height = dead ? "8px" : Math.max(4, p * 42) + "px";
+    n.title = `#${g.id} · ${g.role_proposer} · ${g.status}`;
+    rail.appendChild(n);
+  });
+  rail.scrollLeft = rail.scrollWidth;
+}
+
+function setGate(g) {
+  pending = g;
+  $("#gate").classList.toggle("open", !!g);
+  if (g) {
+    const d = g.scores ? JSON.parse(g.scores).delta : null;
+    $("#gatetext").innerHTML = `Génération <b>#${g.id}</b>, proposée par <b>${g.role_proposer}</b>`
+      + (d !== null ? ` · réussite <b>${d >= 0 ? "+" : ""}${d.toFixed(3)}</b>` : "")
+      + ` · risque <b>${g.risk}</b>`;
+  }
+}
+
+document.querySelectorAll(".acts button").forEach(b => b.onclick = async () => {
+  if (!pending) return;
+  const id = pending.id;
+  setGate(null);
+  await fetch("/verdict/" + id, {
+    method: "POST", headers: { ...H, "Content-Type": "application/json" },
+    body: JSON.stringify({ verdict: b.dataset.v })
+  });
+  poll();
+});
+
+function line(e) {
+  if (!seeded) { $("#thread").innerHTML = ""; seeded = true; }
+  const el = document.createElement("div");
+  if (e.actor === "A" || e.actor === "B") {
+    el.className = "turn " + e.actor;
+    el.innerHTML = `<div class="who">agent ${e.actor}</div>
+      <div class="bubble"></div>`;
+    el.querySelector(".bubble").textContent = e.body;
+  } else {
+    const up = /→ 0?\.\d+/.test(e.body) && !/régression/.test(e.body);
+    el.className = "verdictline " + (e.kind === "error" ? "down" : up ? "up" : "");
+    el.innerHTML = `<b></b>`;
+    el.querySelector("b").textContent = e.body;
+  }
+  $("#thread").appendChild(el);
+  window.scrollTo({ top: document.body.scrollHeight, behavior: "smooth" });
+}
+
+const es = new EventSource("/stream?after=0&token=" + encodeURIComponent(token));
+es.onmessage = m => { const e = JSON.parse(m.data); cursor = e.id; line(e); };
+
+poll(); setInterval(poll, 4000);
+</script>
+</body>
+</html>

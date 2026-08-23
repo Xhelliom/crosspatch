@@ -1,0 +1,139 @@
+# crosspatch
+
+Deux agents identiques qui s'améliorent mutuellement sur un objectif mesurable.
+Un humain arbitre par oui / non, il ne note pas la qualité.
+
+## Invariants — à ne jamais casser
+
+1. **Le processus vivant ne se patche jamais lui-même.** Il produit un candidat,
+   le fait évaluer en sandbox, et après validation humaine le pousse en git.
+   Le redéploiement recharge le code. Pas de hot-patch, jamais.
+2. **`kernel/`, `harness/` et `mission/OBJECTIVE.md` sont immuables** pour les
+   agents. Leur empreinte SHA est vérifiée à chaque génération ; si elle bouge,
+   la boucle s'arrête. Si tu modifies ces chemins toi-même, c'est normal — mais
+   fais-le dans un commit explicite.
+3. **Un agent ne modifie jamais son propre code**, seulement celui de l'autre.
+   A patche B, B patche A. C'est ce qui casse l'auto-validation.
+4. **Le harness est la seule source de vérité sur la qualité.** Aucun agent
+   n'évalue un autre agent. Si tu te surprends à ajouter un LLM-as-judge dans
+   la boucle, relis ce point.
+5. **`OBJECTIVE.md` est gelé pendant un run.** Le modifier impose un nouveau
+   `run_id`, sinon les générations ne sont plus comparables.
+6. **Parité UI ↔ MCP.** Toute information lisible dans l'UI et toute action
+   déclenchable depuis l'UI doivent l'être aussi via un outil MCP, et
+   réciproquement. Les deux tapent sur les mêmes endpoints — l'UI est un
+   client HTTP au même titre que `mcp/server.py`, jamais un chemin privilégié.
+   Concrètement, si tu ajoutes un panneau ou un bouton dans
+   `api/static/index.html`, tu ajoutes dans le même commit l'endpoint dans
+   `api/main.py` et l'outil correspondant dans `mcp/server.py`. Une
+   fonctionnalité qui n'existe que d'un côté est un bug : je pilote depuis le
+   téléphone autant que depuis une session Claude Code, et je dois pouvoir
+   passer de l'un à l'autre sans rien perdre.
+
+## Les trois niveaux — qui décide quoi
+
+| Niveau | Fichier | Auteur | Modifiable en cours de run |
+|---|---|---|---|
+| Mission | `mission/OBJECTIVE.md` | humain | non — gelé, sinon plus rien n'est comparable |
+| Grandes idées | `mission/DIRECTIONS.yaml` | humain surtout ; l'IA propose, l'humain valide | oui — c'est le volant |
+| Tâches | `mission/BACKLOG.yaml` | IA seule | oui, en continu |
+
+L'humain ouvre les terrains, l'IA les explore. Une tâche non rattachée à une
+direction active est écartée à l'ingestion. Une direction proposée par un agent
+reste en `input_required` jusqu'à validation : c'est la frontière entre force de
+proposition et auto-autorisation.
+
+`DIRECTIONS.yaml` est dans `PROTECTED` : les agents ne peuvent pas le patcher,
+seule l'API l'écrit.
+
+## Deux choses à ne pas confondre
+
+- **`harness/tasks/`** = l'étalon de mesure. Écrit par l'humain, gelé pour la
+  durée d'un run, immuable pour les agents. Sans mètre fixe, aucune génération
+  n'est comparable. On n'ajoute pas de tâche en cours de run.
+- **`mission/BACKLOG.yaml`** = les idées d'amélioration. **Généré par les
+  agents** en phase d'idéation. Ne jamais le seeder à la main : ce que les
+  agents trouvent — ou ne trouvent pas — *est* le résultat de l'expérience.
+
+## Le tour, en deux phases
+
+1. **Idéation** (`prompts/ideator.md`) — le proposeur lit le code de l'agent
+   cible, les échecs réels de la dernière éval et les rejets passés, puis écrit
+   2 à 4 hypothèses dans le backlog. Aucun code produit à cette phase.
+2. **Implémentation** (`prompts/proposer.md`) — il prend l'item le mieux classé
+   et produit un diff unique.
+
+La déduplication est le capteur de convergence : quand A et B ne proposent plus
+que des idées déjà connues sur 3 tours consécutifs, la boucle s'arrête. Deux
+agents identiques qui n'ont plus rien de neuf à se dire, c'est le résultat.
+Ne « répare » pas ça en relançant l'idéation avec une température plus haute.
+
+## Architecture
+
+```
+kernel/        immuable — guard (chemins protégés), archive SQLite, budget
+harness/       immuable — tâches et scoring, monté en lecture seule en sandbox
+orchestrator/  mutable  — boucle, client OpenRouter, client E2B, backlog
+api/           mutable  — FastAPI : /state /backlog /verdict /control /stream
+mcp/           mutable  — serveur MCP, l'interface de cette session
+mission/       OBJECTIVE.md (gelé) + BACKLOG.yaml (géré par les agents)
+```
+
+Control plane en un conteneur, exécution déléguée à E2B. Même code path en
+local (`docker compose up`) et en cloud (`git push`).
+
+## Conventions
+
+- Python 3.12, `from __future__ import annotations`, type hints partout.
+- Prose et commentaires en français, identifiants en anglais.
+- États du backlog alignés sur A2A : `submitted`, `working`, `input_required`,
+  `completed`, `failed`, `canceled`.
+- Le modèle des agents est **volontairement milieu de gamme**. Si tu proposes
+  de passer à un modèle plus fort pour améliorer les scores, tu supprimes
+  l'expérience : le headroom est le sujet.
+
+## Surface exposée (garder les trois colonnes alignées)
+
+| Fonction | HTTP | MCP | UI |
+|---|---|---|---|
+| État du run | `GET /state` | `get_state` | bandeau + rail |
+| Taux d'acceptation | dans `GET /state` | dans `get_state` | (à faire) |
+| Backlog | `GET /backlog` | `get_backlog` | (à faire) |
+| Grandes idées | `GET /directions` | `get_directions` | (à faire) |
+| Poser une direction | `POST /directions` | `add_direction` | (à faire) |
+| Trancher une direction | `POST /directions/{id}/verdict` | `set_direction_state` | (à faire) |
+| Fil de discussion | `GET /transcript`, `GET /stream` | `get_transcript` | fil principal |
+| Verdict humain | `POST /verdict/{id}` | `set_verdict` | barre de décision |
+| Pause / reprise / arrêt | `POST /control` | `control` | (à faire) |
+
+Une ligne incomplète est une dette, pas une étape.
+
+`acceptance_rate` (part des propositions qui passent le harness sans régression)
+est calculé dans `kernel/archive.py`, donc immuable. C'est la métrique de
+DIR-003 : elle note la qualité de ce qu'un agent transmet à l'autre. Ne la
+déplace pas dans `orchestrator/`.
+
+## Debug
+
+Ne compte pas sur un terminal — je pilote souvent depuis le téléphone.
+Tout diagnostic passe par les outils MCP : `get_state`, `get_transcript`,
+`get_backlog`. Si une info manque pour debug, ajoute-la à `/state` plutôt que
+de créer un script à lancer à la main.
+
+## Langage
+
+Python pour tout, délibérément. Le control plane (`api/`, `mcp/`, l'UI) gagnerait
+à être en TypeScript et pourra être porté plus tard — la frontière est propre,
+l'API est purement HTTP. Mais `harness/` et `orchestrator/agent.py` restent en
+Python : la langue de l'agent est une variable expérimentale, pas un choix de
+confort, et un modèle milieu de gamme écrit mieux du Python. Voir `HANDOFF.md`
+pour le raisonnement complet avant de rouvrir le sujet.
+
+## Pièges connus
+
+- `git apply` échoue silencieusement si le diff a des offsets de ligne faux —
+  toujours `--unidiff-zero` et vérifier le code retour.
+- Un modèle moyen rate parfois le JSON strict. Un seul retry, puis on marque
+  la génération `failed` : c'est une donnée sur le modèle, pas un bug à masquer.
+- Le score retenu est le **pire** des N runs du soak, pas la moyenne. Ne
+  « corrige » pas ça en passant à la moyenne, c'est délibéré.

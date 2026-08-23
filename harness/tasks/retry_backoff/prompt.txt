@@ -1,0 +1,12 @@
+Écris un module exposant un décorateur :
+
+    retry(attempts: int = 3, base_delay: float = 0.01, exceptions=(Exception,))
+
+Il relance la fonction décorée jusqu'à `attempts` tentatives au total quand
+elle lève une des exceptions listées, avec un backoff exponentiel
+(base_delay, puis base_delay*2, puis base_delay*4...). Après la dernière
+tentative, l'exception d'origine est propagée telle quelle.
+
+Le décorateur doit préserver le nom et la docstring de la fonction, et
+fonctionner aussi bien sur des fonctions à arguments positionnels que nommés.
+Les exceptions non listées ne déclenchent aucun retry.

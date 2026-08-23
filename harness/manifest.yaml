@@ -1,0 +1,6 @@
+# IMMUABLE. Modifier ce fichier invalide toutes les générations précédentes.
+tasks:
+  - id: reverse_words
+    dir: tasks/reverse_words
+    weight: 1.0
+metric: pass_rate
