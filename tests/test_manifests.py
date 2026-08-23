@@ -190,3 +190,84 @@ def test_kustomization_liste_tous_les_manifests():
     sur_disque = {f.name for f in K8S.glob("*.yaml")} - {
         "kustomization.yaml", "secret.example.yaml"}
     assert set(k["resources"]) == sur_disque
+
+
+# --- cohérence entre ce qu'on teste, ce qu'on construit, ce qu'on déploie --
+
+def _workflow(nom: str) -> dict:
+    """Charge un workflow en rendant `on:` accessible.
+
+    YAML 1.1 lit `on` comme le booléen vrai : PyYAML renvoie la clé `True`,
+    pas `"on"`. GitHub, lui, lit du YAML 1.2 et voit bien la chaîne.
+    """
+    d = yaml.safe_load((ROOT / ".github" / "workflows" / nom).read_text())
+    if True in d:
+        d["on"] = d.pop(True)
+    return d
+
+
+def test_la_ci_teste_la_version_de_postgres_qu_on_deploie():
+    """Déployer 18 en ne testant que 16 revient à ne pas tester."""
+    deploye = _nomme("StatefulSet", "postgres")["spec"]["template"]["spec"] \
+        ["containers"][0]["image"]
+    tag = deploye.split(":", 1)[1]
+    matrice = _workflow("tests.yml")["jobs"]["pytest"]["strategy"]["matrix"]["postgres"]
+    assert tag in matrice, f"{tag} déployé mais absent de la matrice {matrice}"
+
+
+def test_compose_et_le_cluster_sur_la_meme_version():
+    """Une divergence local / cluster est la classe de bug que ce projet ne
+    peut pas se permettre."""
+    compose = yaml.safe_load((ROOT / "docker-compose.yml").read_text())
+    cluster = _nomme("StatefulSet", "postgres")["spec"]["template"]["spec"] \
+        ["containers"][0]["image"]
+    assert compose["services"]["db"]["image"] == cluster
+
+
+def test_aucune_image_publiee_sans_tests():
+    images = _workflow("images.yml")
+    assert images["jobs"]["build"]["needs"] == "tests"
+    assert images["jobs"]["tests"]["uses"] == "./.github/workflows/tests.yml"
+
+
+def test_le_workflow_construit_sur_la_branche_que_le_worker_pousse():
+    """`promote()` pousse evolution/<run_id>. Sans build sur cette branche,
+    « le redéploiement recharge le code » n'a rien à recharger."""
+    branches = _workflow("images.yml")["on"]["push"]["branches"]
+    assert any(b.startswith("evolution/") for b in branches), branches
+    backlog = (ROOT / "orchestrator" / "backlog.py").read_text()
+    assert "refs/heads/{branch}" in backlog
+
+
+def test_le_checkout_ne_laisse_pas_de_jeton_dans_l_image():
+    """`.dockerignore` conserve `.git` volontairement — `promote()` en a
+    besoin. Sans `persist-credentials: false`, checkout y écrit le jeton du
+    run, qui finirait dans une couche de l'image publiée."""
+    build = _workflow("images.yml")["jobs"]["build"]["steps"]
+    checkout = next(s for s in build if str(s.get("uses", "")).startswith("actions/checkout"))
+    assert checkout["with"]["persist-credentials"] is False
+    # Un clone superficiel ne peut pas repousser : promote() en dépend.
+    assert checkout["with"]["fetch-depth"] == 0
+    assert any("extraheader" in str(s.get("run", "")) for s in build), \
+        "pas de garde-fou explicite sur .git/config"
+
+
+def test_les_manifests_pointent_l_image_publiee():
+    publiee = "ghcr.io/xhelliom/crosspatch"
+    for nom in ("api", "worker"):
+        image = _nomme("Deployment", nom)["spec"]["template"]["spec"] \
+            ["containers"][0]["image"]
+        assert image.startswith(publiee), (nom, image)
+    k = yaml.safe_load((K8S / "kustomization.yaml").read_text())
+    assert k["images"][0]["name"] == publiee
+
+
+def test_un_tag_mutable_impose_de_retirer_l_image_a_chaque_fois():
+    """`main` bouge à chaque push. Avec IfNotPresent, le nœud garderait
+    l'image déjà téléchargée et le redéploiement ne rechargerait rien."""
+    for nom in ("api", "worker"):
+        c = _nomme("Deployment", nom)["spec"]["template"]["spec"]["containers"][0]
+        tag = c["image"].rsplit(":", 1)[1]
+        mutable = not tag.startswith("sha-")
+        if mutable:
+            assert c["imagePullPolicy"] == "Always", (nom, tag)

@@ -19,5 +19,15 @@ configMapGenerator:
     files:
       - config.yaml=../../config.yaml
 
+# Un seul endroit pour épingler la version déployée. En production, remplace
+# `main` par le tag `sha-<commit>` publié par le workflow images : `main`
+# bouge sous les pieds du cluster, un sha non.
+# Pour une image construite localement :
+#   kubectl kustomize deploy/k8s | sed 's|ghcr.io/xhelliom/crosspatch:main|crosspatch:dev|'
+# ou, plus proprement, `newName: crosspatch` + `newTag: dev` ci-dessous.
+images:
+  - name: ghcr.io/xhelliom/crosspatch
+    newTag: main
+
 commonLabels:
   app.kubernetes.io/part-of: crosspatch

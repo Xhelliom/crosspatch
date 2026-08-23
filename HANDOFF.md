@@ -196,10 +196,38 @@ génération sur le même état), les workspaces et candidats sur volume
 persistant (les perdre remet A et B à la graine), et l'uid 10001 identique
 entre l'image et les manifests.
 
-**L'image n'a pas pu être construite ici** : le registre Docker est bloqué
-par le proxy réseau de la session. Le `Dockerfile` est écrit et relu, il
-n'est pas vérifié. Un `docker build -t crosspatch:dev .` est la première
-chose à faire, et la seule étape de ce lot qui reste non exécutée.
+L'image est construite et publiée par `.github/workflows/images.yml` sur
+`ghcr.io/xhelliom/crosspatch`, à chaque push sur `main` **et sur
+`evolution/**`** — cette seconde branche est celle que le worker pousse
+après validation humaine, c'est donc elle qui referme la boucle « oui →
+redéploiement ». Le job de build dépend du job de tests : aucune image ne
+sort sans que la suite soit passée.
+
+Deux pièges y sont désamorcés, et verrouillés par des tests :
+
+- `actions/checkout` écrit le jeton du run dans `.git/config`. Comme
+  `.dockerignore` conserve `.git` volontairement (`promote()` en a besoin),
+  ce jeton finirait dans une couche de l'image publiée. D'où
+  `persist-credentials: false`, plus une étape qui échoue si un identifiant
+  traîne malgré tout. `fetch-depth: 0` aussi : un clone superficiel ne peut
+  pas repousser.
+- Le tag `main` est mutable. Avec la politique de pull par défaut
+  (`IfNotPresent`), le nœud garderait indéfiniment l'image déjà téléchargée
+  et « le redéploiement recharge le code » deviendrait faux. D'où
+  `imagePullPolicy: Always`, à repasser à `IfNotPresent` le jour où tu
+  épingles un tag `sha-…`.
+
+**Version de Postgres : 18**, pas 16. 16 n'avait été retenu que parce que
+c'est ce que livre Ubuntu 24.04, donc la seule version testable dans la
+session où le portage a été fait ; le dépôt PGDG y était bloqué. La CI
+exécute désormais la suite complète sur **18 et 16**, et un test échoue si
+la version déployée sort de cette matrice, ou si `docker-compose.yml` et le
+cluster divergent.
+
+**L'image n'a jamais été construite en local** : le registre Docker est
+bloqué par le proxy réseau de la session où le `Dockerfile` a été écrit. Il
+est relu, pas exécuté — le premier passage de la CI sera la première
+vérification réelle.
 
 ## L'UI responsive est un travail humain, pas une tâche d'agent
 

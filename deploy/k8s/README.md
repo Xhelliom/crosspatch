@@ -7,22 +7,53 @@ relit à chaque tour de boucle. C'est précisément pour ça que l'archive est
 en Postgres et pas dans un volume partagé : deux pods ne peuvent pas monter
 un PVC `ReadWriteOnce` de façon fiable dès que le cluster a plus d'un nœud.
 
-## 1. Construire l'image et la charger dans le cluster
+## 1. L'image
+
+Elle est construite et publiée par GitHub Actions
+(`.github/workflows/images.yml`) sur `ghcr.io/xhelliom/crosspatch`, à chaque
+push sur `main` **et sur `evolution/**`** — cette seconde branche est celle
+que le worker pousse après ton « oui », donc c'est elle qui referme la
+boucle « validation → redéploiement ». Aucune image n'est publiée sans que
+la suite de tests soit passée.
+
+Un paquet GHCR est **privé par défaut**, même sur un dépôt public. Deux
+options :
+
+- le rendre public : page du paquet → *Package settings* → *Change
+  visibility* ; le cluster tire sans identifiants ;
+- le garder privé et créer un secret de pull :
+
+```bash
+kubectl -n crosspatch create secret docker-registry ghcr \
+  --docker-server=ghcr.io --docker-username=<utilisateur> \
+  --docker-password=<PAT avec read:packages>
+```
+(puis ajouter `imagePullSecrets: [{name: ghcr}]` aux deux Deployments).
+
+### Ou en local, sans registre
 
 ```bash
 docker build -t crosspatch:dev .
+docker save crosspatch:dev | sudo k3s ctr images import -   # k3s / k3d
+# kind load docker-image crosspatch:dev
+# minikube image load crosspatch:dev
 ```
 
-Le cluster doit voir l'image localement — `imagePullPolicy: IfNotPresent`, il
-n'y a pas de registre :
+Puis pointe les manifests dessus — et repasse la politique de pull à
+`IfNotPresent`, sinon le cluster cherchera l'image dans un registre :
 
-```bash
-# k3s / k3d
-docker save crosspatch:dev | sudo k3s ctr images import -
-# kind
-kind load docker-image crosspatch:dev
-# minikube
-minikube image load crosspatch:dev
+```yaml
+# deploy/k8s/kustomization.yaml
+images:
+  - name: ghcr.io/xhelliom/crosspatch
+    newName: crosspatch
+    newTag: dev
+patches:
+  - target: { kind: Deployment }
+    patch: |
+      - op: replace
+        path: /spec/template/spec/containers/0/imagePullPolicy
+        value: IfNotPresent
 ```
 
 ## 2. Créer le Secret

@@ -7,17 +7,28 @@ on:
   push:
     branches: [main, "evolution/**", "claude/**"]
   pull_request:
+  # Appelé par le workflow d'images : aucune image n'est publiée sans que
+  # cette suite soit passée.
+  workflow_call:
 
 jobs:
   pytest:
     runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        # 18 est la version déployée (deploy/k8s + docker compose). 16 reste
+        # testée parce que c'est ce que livrent les distributions courantes,
+        # et donc ce sur quoi tombera quiconque installe Postgres par apt.
+        postgres: ["18-alpine", "16-alpine"]
 
     # L'archive a deux backends et le SQL est traduit d'un dialecte à
     # l'autre : la suite doit passer sur les deux, sinon la traduction n'est
     # vérifiée que le jour où le cluster est en route.
     services:
       postgres:
-        image: postgres:16-alpine
+        image: postgres:${{ matrix.postgres }}
         env:
           POSTGRES_PASSWORD: postgres
           POSTGRES_DB: crosspatch
@@ -45,7 +56,7 @@ jobs:
       # la suite ne fait aucun appel réseau. Le jour où un test réclame une
       # clé, c'est qu'il est devenu un test d'intégration et qu'il a sa
       # place ailleurs.
-      - name: Suite de tests (SQLite + Postgres)
+      - name: Suite de tests (SQLite + Postgres ${{ matrix.postgres }})
         env:
           CROSSPATCH_TEST_PG: postgresql://postgres:postgres@localhost:5432/crosspatch
         run: pytest -q
