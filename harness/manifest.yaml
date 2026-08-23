@@ -1,6 +1,14 @@
 # IMMUABLE. Modifier ce fichier invalide toutes les générations précédentes.
+# `run.py` énumère `tasks/` : cette liste doit rester le miroir exact du
+# disque. Toute divergence est un bug.
 tasks:
-  - id: reverse_words
-    dir: tasks/reverse_words
+  - id: interval_merge
+    dir: tasks/interval_merge
+    weight: 1.0
+  - id: retry_backoff
+    dir: tasks/retry_backoff
+    weight: 1.0
+  - id: rle
+    dir: tasks/rle
     weight: 1.0
 metric: pass_rate

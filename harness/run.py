@@ -7,6 +7,7 @@ Ne modifie jamais ce fichier pour "faire passer" une génération : ça
 invalide toutes les comparaisons antérieures.
 """
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -15,7 +16,10 @@ import time
 from pathlib import Path
 
 HERE = Path(__file__).parent
-WORK = Path("/work")
+# En sandbox le workspace est monté sur /work. La variable d'environnement
+# n'existe que pour pouvoir rejouer le harness hors sandbox (voir tests/) :
+# elle n'est jamais posée par du code d'agent.
+WORK = Path(os.environ.get("CROSSPATCH_WORK", "/work"))
 TIMEOUT = 180
 
 
@@ -36,8 +40,15 @@ def run_task(solve, task: Path) -> dict:
             return {"id": task.name, "ok": False, "why": f"agent: {e!r}",
                     "elapsed": time.time() - t0}
         shutil.copy(task / "test_solution.py", d / "test_solution.py")
-        p = subprocess.run([sys.executable, "-m", "pytest", "-q", str(d)],
-                           capture_output=True, timeout=TIMEOUT, cwd=d)
+        try:
+            p = subprocess.run([sys.executable, "-m", "pytest", "-q", str(d)],
+                               capture_output=True, timeout=TIMEOUT, cwd=d)
+        except subprocess.TimeoutExpired:
+            # Une tâche qui part en boucle ne doit pas emporter les autres :
+            # sans ça, l'exception remonte et toute l'évaluation est perdue.
+            return {"id": task.name, "ok": False,
+                    "why": f"timeout pytest ({TIMEOUT}s)",
+                    "elapsed": time.time() - t0}
     return {"id": task.name, "ok": p.returncode == 0,
             "why": p.stdout.decode()[-600:] if p.returncode else "",
             "elapsed": time.time() - t0}
