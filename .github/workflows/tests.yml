@@ -4,8 +4,10 @@
 name: tests
 
 on:
+  # `main` et `evolution/**` passent par le workflow d'images, qui appelle
+  # ce fichier : les lister ici ferait tourner la suite deux fois.
   push:
-    branches: [main, "evolution/**", "claude/**"]
+    branches: ["claude/**"]
   pull_request:
   # Appelé par le workflow d'images : aucune image n'est publiée sans que
   # cette suite soit passée.
@@ -34,7 +36,7 @@ jobs:
           POSTGRES_DB: crosspatch
         ports: ["5432:5432"]
         options: >-
-          --health-cmd pg_isready
+          --health-cmd "pg_isready -U postgres -d crosspatch"
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
