@@ -1,0 +1,78 @@
+# Le control plane HTTP. C'est ce que le téléphone interroge : il lit l'état
+# et écrit des intentions dans la table `control`. Il n'exécute rien —
+# aucune référence au worker, aucune mémoire partagée avec lui.
+apiVersion: v1
+kind: Service
+metadata:
+  name: api
+  labels: { app.kubernetes.io/name: api }
+spec:
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+  selector: { app.kubernetes.io/name: api }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app.kubernetes.io/name: api }
+  template:
+    metadata:
+      labels: { app.kubernetes.io/name: api }
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: api
+          image: crosspatch:dev
+          imagePullPolicy: IfNotPresent
+          command: ["uvicorn", "api.main:app", "--host", "0.0.0.0", "--port", "8080"]
+          envFrom:
+            - secretRef: { name: crosspatch-secrets }
+          env:
+            # $(VAR) est développé par kubelet à partir des variables
+            # déclarées avant, y compris celles venant du Secret.
+            - name: CROSSPATCH_ARCHIVE
+              value: postgresql://crosspatch:$(POSTGRES_PASSWORD)@postgres:5432/crosspatch
+          ports:
+            - name: http
+              containerPort: 8080
+          readinessProbe:
+            httpGet: { path: /healthz, port: http }
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /healthz, port: http }
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          resources:
+            # Mesuré : ~51 Mio après 30 requêtes, CPU quasi nul au repos.
+            requests: { cpu: 10m, memory: 64Mi }
+            limits: { memory: 256Mi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+            # config.yaml vient du dépôt via kustomize : régler max_usd ou
+            # le modèle ne demande pas de reconstruire l'image.
+            - name: config
+              mountPath: /app/config.yaml
+              subPath: config.yaml
+              readOnly: true
+      volumes:
+        - name: tmp
+          emptyDir: {}
+        - name: config
+          configMap:
+            name: crosspatch-config

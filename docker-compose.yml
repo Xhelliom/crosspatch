@@ -1,12 +1,39 @@
+# Postgres en local aussi, pas SQLite : le cluster tourne sur Postgres, et
+# une divergence local/production est exactement la classe de bug que ce
+# projet ne peut pas se permettre. SQLite reste le défaut du code — c'est ce
+# qui fait tourner la suite de tests sans dépendance.
 services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: crosspatch
+      POSTGRES_USER: crosspatch
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-crosspatch-local}
+    volumes: ["./data/pg:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U crosspatch -d crosspatch"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
   api:
     build: .
     ports: ["8080:8080"]
     env_file: .env
-    volumes: ["./data:/app/data"]
+    environment:
+      CROSSPATCH_ARCHIVE: postgresql://crosspatch:${POSTGRES_PASSWORD:-crosspatch-local}@db:5432/crosspatch
+    depends_on:
+      db: { condition: service_healthy }
+
   worker:
     build: .
     command: python -m orchestrator.loop
     env_file: .env
-    volumes: ["./data:/app/data", "./workspaces:/app/workspaces"]
-    depends_on: [api]
+    environment:
+      CROSSPATCH_ARCHIVE: postgresql://crosspatch:${POSTGRES_PASSWORD:-crosspatch-local}@db:5432/crosspatch
+    volumes:
+      - ./workspaces:/app/workspaces
+      - ./candidates:/app/candidates
+    depends_on:
+      db: { condition: service_healthy }
+      api: { condition: service_started }

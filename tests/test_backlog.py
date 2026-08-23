@@ -7,6 +7,7 @@ d'exception jusqu'à la boucle.
 """
 from __future__ import annotations
 
+import os
 import subprocess
 from pathlib import Path
 
@@ -162,3 +163,45 @@ def test_ingest_dedoublonne(tmp_path):
     bl.ingest(path, [idea], "A", None, valid_dirs={"DIR-001"})
     fresh, dupes, _ = bl.ingest(path, [idea], "B", None, valid_dirs={"DIR-001"})
     assert fresh == [] and dupes == 1
+
+
+def test_promote_sans_identite_git_configuree(tmp_path, monkeypatch):
+    """Un conteneur frais n'a ni user.name ni user.email.
+
+    Sans identité passée en `-c`, `git commit` échoue sur « Please tell me
+    who you are » — au moment précis où l'humain vient de valider.
+    """
+    remote = tmp_path / "remote.git"
+    subprocess.run(["git", "init", "--bare", "-q", str(remote)], check=True)
+    root = tmp_path / "root"
+    (root / "orchestrator").mkdir(parents=True)
+    (root / "orchestrator" / "agent.py").write_text("v1\n")
+
+    # Environnement vierge : aucune config git globale, aucune injectée.
+    faux_home = tmp_path / "home"
+    faux_home.mkdir()
+    for k in list(os.environ):
+        if k.startswith("GIT_CONFIG"):
+            monkeypatch.delenv(k, raising=False)
+    monkeypatch.setenv("HOME", str(faux_home))
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(faux_home / "absent"))
+    monkeypatch.setenv("GIT_CONFIG_SYSTEM", str(faux_home / "absent"))
+    monkeypatch.delenv("GIT_PUSH_TOKEN", raising=False)
+
+    for cmd in (["git", "init", "-q", "-b", "main"],
+                ["git", "remote", "add", "origin", str(remote)]):
+        subprocess.run(cmd, cwd=root, check=True)
+    # Le commit de base doit lui aussi passer sans identité : on le fait via
+    # la même mécanique, sinon le dépôt de test n'a pas de HEAD.
+    subprocess.run(["git", "add", "-A"], cwd=root, check=True)
+    subprocess.run([*bl._git(), "commit", "-qm", "base"], cwd=root, check=True)
+
+    cand = root / "candidates" / "3" / "orchestrator"
+    cand.mkdir(parents=True)
+    (cand / "agent.py").write_text("v2\n")
+
+    bl.promote(root, 3, branch="evolution/run")     # ne doit pas lever
+
+    auteur = subprocess.run(["git", "log", "-1", "--format=%an <%ae>"], cwd=root,
+                            capture_output=True, text=True).stdout.strip()
+    assert auteur == "crosspatch worker <worker@crosspatch.local>"

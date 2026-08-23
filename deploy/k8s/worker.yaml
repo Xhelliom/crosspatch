@@ -1,0 +1,81 @@
+# La boucle. **La seule chose qui exécute quoi que ce soit** : elle relit les
+# intentions déposées par l'API, appelle OpenRouter, démarre les sandboxes
+# E2B, et pousse la branche evolution/* après validation humaine.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: worker-state
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 2Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: worker
+spec:
+  replicas: 1
+  # Recreate, pas RollingUpdate : pendant un roulement, deux workers
+  # tourneraient une poignée de secondes. Ils proposeraient chacun une
+  # génération sur le même état et consommeraient chacun les mêmes
+  # intentions. Un seul worker à la fois, toujours.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels: { app.kubernetes.io/name: worker }
+  template:
+    metadata:
+      labels: { app.kubernetes.io/name: worker }
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: worker
+          image: crosspatch:dev
+          imagePullPolicy: IfNotPresent
+          command: ["python", "-m", "orchestrator.loop"]
+          envFrom:
+            - secretRef: { name: crosspatch-secrets }
+          env:
+            - name: CROSSPATCH_ARCHIVE
+              value: postgresql://crosspatch:$(POSTGRES_PASSWORD)@postgres:5432/crosspatch
+          resources:
+            # Mesuré : ~57 Mio boucle chargée. Le CPU reste bas — le worker
+            # attend le réseau (OpenRouter, E2B) ou un arbitrage humain.
+            requests: { cpu: 10m, memory: 96Mi }
+            limits: { memory: 384Mi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            # Racine inscriptible, contrairement à l'API : `promote()` recopie
+            # le candidat dans /app puis y fait un commit git avant de pousser.
+            readOnlyRootFilesystem: false
+            capabilities: { drop: ["ALL"] }
+          volumeMounts:
+            # Les workspaces A et B sont l'état de l'expérience : les perdre
+            # au redémarrage remettrait les deux agents à la graine.
+            - name: state
+              mountPath: /app/workspaces
+              subPath: workspaces
+            # Les candidats survivent au redémarrage parce qu'un verdict
+            # humain peut arriver longtemps après l'évaluation, et que
+            # `promote()` relit candidates/<gen_id> à ce moment-là.
+            - name: state
+              mountPath: /app/candidates
+              subPath: candidates
+            - name: config
+              mountPath: /app/config.yaml
+              subPath: config.yaml
+              readOnly: true
+      volumes:
+        - name: state
+          persistentVolumeClaim:
+            claimName: worker-state
+        - name: config
+          configMap:
+            name: crosspatch-config

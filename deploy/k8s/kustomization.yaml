@@ -1,0 +1,23 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: crosspatch
+
+resources:
+  - namespace.yaml
+  - postgres.yaml
+  - api.yaml
+  - worker.yaml
+
+# `secret.example.yaml` est volontairement absent : le Secret se crée en
+# ligne de commande pour qu'aucune valeur ne transite par git.
+
+# config.yaml est généré depuis le fichier du dépôt : une seule source de
+# vérité, et le suffixe de hachage force le redémarrage des pods quand il
+# change.
+configMapGenerator:
+  - name: crosspatch-config
+    files:
+      - config.yaml=../../config.yaml
+
+commonLabels:
+  app.kubernetes.io/part-of: crosspatch

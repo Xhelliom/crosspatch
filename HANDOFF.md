@@ -156,35 +156,50 @@ Deux hypothèses de la passation étaient fausses, et une troisième manquait :
    une vraie réponse. Si le champ est absent, `max_usd` ne protège plus rien :
    à contrôler au premier appel réel.
 
-## Le déploiement cloud ne marche pas tel quel — à trancher
+## Déploiement : Kubernetes, archive en Postgres
 
-`docker-compose.yml` monte `./data` dans **les deux** services : l'API et le
-worker partagent le fichier SQLite de l'archive. C'est ce qui fait
-fonctionner le plan de contrôle (l'API écrit des intentions, le worker les
-relit). En local, le bind mount le donne gratuitement.
+`docker-compose.yml` montait `./data` dans les deux services : l'API et le
+worker partageaient le fichier SQLite, et c'est ce qui faisait fonctionner le
+plan de contrôle. Le bind mount local le donne gratuitement, le cluster non —
+le stockage bloc est mono-attachement (un volume Railway se monte sur un seul
+service, un volume Fly est lié à une seule machine, un PVC `ReadWriteOnce`
+n'est partageable entre deux pods que s'ils sont sur le même nœud).
 
-En cloud, non. Le stockage bloc des PaaS est mono-attachement : un volume
-Railway se monte sur **un seul** service, et Railway a dit ne pas prévoir de
-volumes partagés ; un volume Fly est lié à une seule machine. Deux services
-= deux disques = l'API écrirait des verdicts que le worker ne lirait jamais.
+**Tranché : Postgres.** `kernel/archive.py` a désormais deux backends —
+SQLite quand l'adresse est un chemin, Postgres quand c'est une DSN. Un seul
+réglage (`CROSSPATCH_ARCHIVE`), aucune branche ailleurs dans le code. Le SQL
+est écrit une fois en dialecte SQLite et traduit ; `tests/test_archive.py`
+exécute le **même contrat** sur les deux backends, et la CI démarre un
+Postgres pour que ça reste vrai.
 
-Trois issues, par ordre de coût :
+Ce que la mise en place a fait tomber, et qui n'était pas prévu :
 
-1. **Postgres à la place de SQLite.** L'archive devient un service réseau que
-   les deux conteneurs joignent. C'est la réponse standard et la seule qui
-   préserve l'invariant « web et worker séparés ». Coût : réécrire les
-   requêtes de `kernel/archive.py` (surtout `json_extract`, qui n'existe pas
-   en Postgres) et rendre la connexion configurable pour garder SQLite en
-   local. Une centaine de lignes, dans un fichier du noyau.
-2. **SQLite en réseau** (Turso / libSQL). Beaucoup moins de SQL à changer,
-   mais un compte et une dépendance de plus.
-3. **Un seul service pour les deux processus.** Le moins de travail, et
-   `CLAUDE.md` l'interdit explicitement : la séparation est ce qui permet le
-   scale-to-zero. À ne faire que comme décision consciente, pas comme
-   contournement.
+- **`json_extract` n'existe pas en Postgres.** `best()` et `plateau()`
+  l'utilisent : ce sont les deux requêtes qui cassaient en premier.
+- **`lastrowid` n'existe pas non plus** — remplacé par `RETURNING id`.
+- **psycopg ouvre une transaction au premier `SELECT` et ne la referme
+  jamais.** L'API garde sa connexion ouverte : elle serait restée « idle in
+  transaction » à vie, bloquant tout DDL et empêchant le VACUUM de nettoyer.
+  Trouvé parce que la suite de tests s'est bloquée sur un `DROP TABLE`.
+  Corrigé par `autocommit=True`.
+- **`SCHEMA.format()` mangeait les accolades des commentaires SQL**
+  (`-- json {pass_rate, …}`). Substitution par marqueurs explicites.
 
-Tant que ce n'est pas tranché, le seul chemin qui fonctionne de bout en bout
-est `docker compose up` en local.
+`docker-compose.yml` tourne maintenant sur Postgres lui aussi : une
+divergence local / cluster est exactement la classe de bug que ce projet ne
+peut pas se permettre.
+
+`deploy/k8s/` contient les manifests complets, avec leur mode d'emploi dans
+`deploy/k8s/README.md`. Trois invariants y sont verrouillés par des tests :
+`worker` en `replicas: 1` + `Recreate` (deux workers proposeraient chacun une
+génération sur le même état), les workspaces et candidats sur volume
+persistant (les perdre remet A et B à la graine), et l'uid 10001 identique
+entre l'image et les manifests.
+
+**L'image n'a pas pu être construite ici** : le registre Docker est bloqué
+par le proxy réseau de la session. Le `Dockerfile` est écrit et relu, il
+n'est pas vérifié. Un `docker build -t crosspatch:dev .` est la première
+chose à faire, et la seule étape de ce lot qui reste non exécutée.
 
 ## L'UI responsive est un travail humain, pas une tâche d'agent
 

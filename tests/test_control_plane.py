@@ -16,8 +16,10 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 @pytest.fixture()
-def api(tmp_path, monkeypatch):
-    monkeypatch.setenv("CROSSPATCH_ARCHIVE", str(tmp_path / "archive.db"))
+def api(adresse_archive, monkeypatch):
+    """L'API contre les deux backends : c'est elle qui écrit les intentions,
+    une différence de dialecte ici casserait le pilotage en cluster."""
+    monkeypatch.setenv("CROSSPATCH_ARCHIVE", adresse_archive)
     monkeypatch.setenv("CONTROL_TOKEN", "jeton-de-test")
     for mod in ("api.main",):
         import sys

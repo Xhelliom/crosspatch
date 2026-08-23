@@ -1,0 +1,74 @@
+# L'archive. C'est ici que vivent les générations, le budget, le fil de
+# discussion et — surtout — la table `control` par laquelle l'API dépose ses
+# intentions et le worker les exécute. Les deux pods ne partagent rien
+# d'autre.
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+  labels: { app.kubernetes.io/name: postgres }
+spec:
+  ports:
+    - port: 5432
+      targetPort: postgres
+  selector: { app.kubernetes.io/name: postgres }
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres
+spec:
+  serviceName: postgres
+  replicas: 1
+  selector:
+    matchLabels: { app.kubernetes.io/name: postgres }
+  template:
+    metadata:
+      labels: { app.kubernetes.io/name: postgres }
+    spec:
+      securityContext:
+        fsGroup: 999
+      containers:
+        - name: postgres
+          image: postgres:16-alpine
+          env:
+            - name: POSTGRES_DB
+              value: crosspatch
+            - name: POSTGRES_USER
+              value: crosspatch
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: crosspatch-secrets
+                  key: POSTGRES_PASSWORD
+            # Sous-répertoire imposé : le point de montage d'un PVC n'est pas
+            # vide (lost+found) et initdb refuse un répertoire non vide.
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          ports:
+            - name: postgres
+              containerPort: 5432
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", "crosspatch", "-d", "crosspatch"]
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            exec:
+              command: ["pg_isready", "-U", "crosspatch", "-d", "crosspatch"]
+            initialDelaySeconds: 30
+            periodSeconds: 20
+          resources:
+            requests: { cpu: 25m, memory: 128Mi }
+            limits: { memory: 512Mi }
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 2Gi

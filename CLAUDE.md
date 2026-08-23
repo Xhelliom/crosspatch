@@ -89,6 +89,16 @@ chaque itération et reste seul à exécuter quoi que ce soit. Ne pas répondre 
 un problème de synchronisation en fusionnant les deux services : la séparation
 web / worker est ce qui permet le scale-to-zero en cloud.
 
+L'archive a donc **deux backends** : SQLite quand `archive_path` est un
+chemin, Postgres quand c'est une DSN. SQLite est le défaut — c'est ce qui
+fait tourner la suite sans dépendance. Postgres est ce qui tourne en
+cluster, parce que deux pods ne peuvent pas partager un PVC de façon
+fiable. Le SQL est écrit **une seule fois**, en dialecte SQLite, et traduit
+(`_pour_postgres`) : toute requête ajoutée à `kernel/archive.py` doit
+apparaître dans `tests/test_archive.py`, qui exécute le même contrat sur les
+deux. `deploy/k8s/` est validé par `tests/test_manifests.py` contre les
+modèles d'API Kubernetes réels.
+
 ## Conventions
 
 - Python 3.12, `from __future__ import annotations`, type hints partout.

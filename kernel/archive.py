@@ -1,7 +1,19 @@
-"""NOYAU IMMUABLE. Archive des générations et compteur de budget."""
+"""NOYAU IMMUABLE. Archive des générations et compteur de budget.
+
+Deux backends, une seule API. SQLite par défaut — c'est ce qui rend les
+tests et le `docker compose up` local sans dépendance. Postgres dès que
+l'adresse est une DSN, parce qu'en cluster l'API et le worker sont deux pods
+qui ne peuvent pas partager un volume de façon fiable.
+
+Le SQL est écrit une seule fois, en dialecte SQLite, et traduit pour
+Postgres. Toute requête ajoutée ici doit passer les deux : `tests/` exécute
+la même suite contre les deux backends.
+"""
 from __future__ import annotations
 
 import json
+import os
+import re
 import sqlite3
 import time
 from dataclasses import asdict, dataclass, field
@@ -9,7 +21,7 @@ from pathlib import Path
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS generations (
-  id            INTEGER PRIMARY KEY,
+  id            @PK@,
   run_id        TEXT NOT NULL,
   parent_id     INTEGER,
   role_proposer TEXT NOT NULL,       -- 'A' ou 'B'
@@ -21,29 +33,101 @@ CREATE TABLE IF NOT EXISTS generations (
   risk          TEXT DEFAULT 'low',
   human_verdict TEXT,                -- ok | scope | risky | useless
   note          TEXT,
-  created_at    REAL NOT NULL
+  created_at    @REAL@ NOT NULL
 );
 CREATE TABLE IF NOT EXISTS spend (
-  id       INTEGER PRIMARY KEY,
+  id       @PK@,
   gen_id   INTEGER,
   kind     TEXT,                     -- llm | sandbox
-  usd      REAL NOT NULL,
-  at       REAL NOT NULL
+  usd      @REAL@ NOT NULL,
+  at       @REAL@ NOT NULL
 );
 CREATE TABLE IF NOT EXISTS control (
   key   TEXT PRIMARY KEY,        -- paused | stop | verdict:<gen> | rollback:<gen>
   value TEXT NOT NULL,
-  at    REAL NOT NULL
+  at    @REAL@ NOT NULL
 );
 CREATE TABLE IF NOT EXISTS events (
-  id     INTEGER PRIMARY KEY,
+  id     @PK@,
   gen_id INTEGER,
   actor  TEXT,                       -- A | B | referee | human | system
   kind   TEXT,                       -- message | score | verdict | error
   body   TEXT,
-  at     REAL NOT NULL
+  at     @REAL@ NOT NULL
 );
 """
+
+# `json_extract(col,'$.clé')` n'existe pas en Postgres. Le SQL commun
+# l'utilise, la traduction s'en charge — `NULLIF` parce qu'un `scores` vide
+# ferait échouer le cast en jsonb.
+_JSON = re.compile(r"json_extract\((\w+),'\$\.(\w+)'\)")
+
+
+def est_postgres(adresse: str) -> bool:
+    return adresse.startswith(("postgres://", "postgresql://"))
+
+
+def _schema(pk: str, real: str) -> str:
+    """Substitution par marqueurs, pas par `str.format` : le schéma contient
+    des accolades dans ses commentaires (`-- json {pass_rate, …}`) et
+    `format` les prendrait pour des champs."""
+    return SCHEMA.replace("@PK@", pk).replace("@REAL@", real)
+
+
+def _pour_postgres(sql: str) -> str:
+    sql = _JSON.sub(r"(NULLIF(\1,'')::jsonb->>'\2')::double precision", sql)
+    return sql.replace("?", "%s")
+
+
+class _Conn:
+    """Connexion unique, deux dialectes.
+
+    Traduit le SQL commun avant de l'exécuter, et expose la même surface que
+    `sqlite3.Connection` pour que le reste du fichier ignore le backend.
+    Les lignes reviennent indexables par nom dans les deux cas.
+    """
+
+    def __init__(self, adresse: str):
+        self.postgres = est_postgres(adresse)
+        if self.postgres:
+            import psycopg
+            from psycopg.rows import dict_row
+            # autocommit : sans lui, psycopg ouvre une transaction au
+            # premier SELECT et ne la referme jamais. L'API, qui garde sa
+            # connexion ouverte, resterait « idle in transaction » à vie —
+            # elle bloquerait tout DDL et empêcherait le VACUUM de nettoyer.
+            # Chaque instruction est déjà atomique ici, les `commit()`
+            # explicites deviennent des non-opérations inoffensives.
+            self.raw = psycopg.connect(adresse, row_factory=dict_row,
+                                       autocommit=True)
+            schema = _schema("BIGSERIAL PRIMARY KEY", "DOUBLE PRECISION")
+        else:
+            Path(adresse).parent.mkdir(parents=True, exist_ok=True)
+            self.raw = sqlite3.connect(adresse, check_same_thread=False)
+            self.raw.row_factory = sqlite3.Row
+            # Deux conteneurs écrivent dans ce fichier : l'API à chaque
+            # requête, le worker en continu. Le délai d'attente sur verrou
+            # est explicite plutôt que laissé au défaut — c'est une
+            # hypothèse de l'architecture, elle doit être lisible ici.
+            self.raw.execute("PRAGMA busy_timeout = 15000")
+            schema = _schema("INTEGER PRIMARY KEY", "REAL")
+
+        for stmt in filter(str.strip, schema.split(";")):
+            self.execute(stmt)
+        self.commit()
+
+    def execute(self, sql: str, params: tuple = ()):
+        if self.postgres:
+            cur = self.raw.cursor()
+            cur.execute(_pour_postgres(sql), params)
+            return cur
+        return self.raw.execute(sql, params)
+
+    def commit(self) -> None:
+        self.raw.commit()
+
+    def close(self) -> None:
+        self.raw.close()
 
 
 @dataclass
@@ -63,20 +147,12 @@ class Generation:
 
 class Archive:
     def __init__(self, path: str = "data/archive.db"):
-        Path(path).parent.mkdir(parents=True, exist_ok=True)
-        self.db = sqlite3.connect(path, check_same_thread=False)
-        self.db.row_factory = sqlite3.Row
-        # Deux conteneurs écrivent dans ce fichier : l'API à chaque requête,
-        # le worker en continu. Le délai d'attente sur verrou est explicite
-        # plutôt que laissé à la valeur par défaut — c'est une hypothèse de
-        # l'architecture, elle doit être lisible ici.
-        #
-        # Pas de WAL : il réclame de la mémoire partagée entre processus, ce
-        # que certains montages (bind mount Docker Desktop, NFS) ne rendent
-        # pas correctement. Le mode par défaut tient la charge mesurée.
-        self.db.execute("PRAGMA busy_timeout = 15000")
-        self.db.executescript(SCHEMA)
-        self.db.commit()
+        """`path` est un chemin de fichier SQLite, ou une DSN Postgres.
+
+        Un seul réglage pour les deux : `CROSSPATCH_ARCHIVE=postgresql://…`
+        en cluster, un chemin en local, sans branche ailleurs dans le code.
+        """
+        self.db = _Conn(path)
 
     # --- générations -----------------------------------------------------
     def add(self, g: Generation) -> int:
@@ -84,13 +160,16 @@ class Archive:
         d.pop("id")
         d["scores"] = json.dumps(d["scores"])
         cols = ",".join(d)
+        # RETURNING plutôt que `lastrowid` : Postgres n'a pas d'équivalent,
+        # et SQLite le gère depuis 3.35.
         cur = self.db.execute(
             f"INSERT INTO generations ({cols},created_at) "
-            f"VALUES ({','.join('?' * len(d))},?)",
+            f"VALUES ({','.join('?' * len(d))},?) RETURNING id",
             (*d.values(), time.time()),
         )
+        gen_id = cur.fetchone()["id"]
         self.db.commit()
-        return cur.lastrowid
+        return gen_id
 
     def update(self, gen_id: int, **fields) -> None:
         if "scores" in fields:

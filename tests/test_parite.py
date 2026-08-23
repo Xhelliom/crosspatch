@@ -65,8 +65,10 @@ def test_chaque_endpoint_de_pilotage_a_un_outil_mcp(routes_api, serveur_mcp):
     `/transcript`, qui a bien son outil."""
     src = (ROOT / "mcp" / "server.py").read_text()
     couverts = {_generique(m) for m in re.findall(r'_(?:get|post)\(f?"([^"]+)"', src)}
-    hors_perimetre = {"/", "/stream", "/openapi.json", "/docs", "/redoc",
-                      "/docs/oauth2-redirect"}
+    # `/healthz` est de l'infrastructure, pas une fonction de pilotage :
+    # elle s'adresse à kubelet et n'expose aucune information de run.
+    hors_perimetre = {"/", "/stream", "/healthz", "/openapi.json", "/docs",
+                      "/redoc", "/docs/oauth2-redirect"}
     orphelins = routes_api - couverts - hors_perimetre
     assert not orphelins, f"endpoints sans outil MCP : {orphelins}"
 

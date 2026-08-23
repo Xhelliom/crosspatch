@@ -28,13 +28,13 @@ pas interchangeables** :
 
 | Où | Quoi | Pourquoi là |
 |---|---|---|
-| `.env` local | les cinq | lu par `docker compose`, ignoré par git |
-| Variables d'env de l'hébergeur (Railway, Fly…) | les cinq | c'est le seul endroit que le conteneur lit à l'exécution |
+| `.env` local | les six | lu par `docker compose`, ignoré par git |
+| Secret Kubernetes | les six | voir `deploy/k8s/README.md` — créé en ligne de commande, jamais dans git |
 | Secrets GitHub Actions | rien | la CI ne fait aucun appel réseau, elle n'en a besoin d'aucun |
 
 Le dernier point mérite d'être dit : les « secrets de dépôt » GitHub ne sont
 lus que par les workflows Actions. Les y poser ne donne rien à l'application —
-c'est l'hébergeur qui alimente le conteneur.
+c'est l'orchestrateur de conteneurs qui l'alimente.
 
 Deux clés OpenRouter, pas une : celle de l'orchestrateur, et celle de l'agent
 évalué, injectée dans le sandbox. Cette seconde clé vit dans un environnement
@@ -58,12 +58,20 @@ génération n'a de sens et il est inutile de débugger le reste.
 
 UI sur http://localhost:8080 — le fil de discussion et les boutons de validation.
 
-## Cloud
+## Kubernetes
 
-Push sur GitHub, connecter le repo à Railway ou Fly. Deux services depuis le
-même Dockerfile : `api` (web) et `worker` (`python -m orchestrator.loop`).
-Les variables d'env sont les mêmes. Rien d'autre ne change : le sandbox est
-délégué à E2B, donc le code path est identique en local et en cloud.
+Manifests complets dans `deploy/k8s/`, mode d'emploi dans
+`deploy/k8s/README.md` :
+
+```bash
+docker build -t crosspatch:dev .
+kubectl apply -k deploy/k8s
+```
+
+Trois pods : `postgres` (l'archive), `api` et `worker`. L'archive est en
+Postgres et non dans un volume partagé, parce que deux pods ne peuvent pas
+monter un PVC `ReadWriteOnce` de façon fiable. Le sandbox reste délégué à
+E2B : le code path est identique en local et en cluster.
 
 ## Piloter depuis Claude Code
 

@@ -1,0 +1,4 @@
+# Outillage de vérification. Pas embarqué dans l'image.
+-r requirements.txt
+pytest>=8.0
+kubernetes>=31.0      # valide deploy/k8s/ contre les modèles d'API réels

@@ -180,6 +180,15 @@ async def stream(after: int = 0, token: str = "") -> StreamingResponse:
     return StreamingResponse(gen(), media_type="text/event-stream")
 
 
+@app.get("/healthz")
+def healthz() -> dict:
+    """Sonde de vivacité, sans authentification : c'est kubelet qui appelle,
+    pas un humain. Elle ne divulgue rien — elle vérifie seulement que
+    l'archive est joignable, ce qui attrape le cas « volume non monté »."""
+    archive.db.execute("SELECT 1").fetchone()
+    return {"ok": True}
+
+
 @app.get("/")
 def ui() -> FileResponse:
     return FileResponse(ROOT / "api" / "static" / "index.html")

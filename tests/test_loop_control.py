@@ -19,7 +19,7 @@ SKIP = {".git", ".venv", "data", "workspaces", "candidates",
 
 
 @pytest.fixture()
-def loop(tmp_path, monkeypatch):
+def loop(adresse_archive, tmp_path, monkeypatch):
     """Un Loop complet sur une copie jetable du dépôt, sans LLM ni sandbox."""
     root = tmp_path / "repo"
     root.mkdir()
@@ -29,7 +29,7 @@ def loop(tmp_path, monkeypatch):
         (shutil.copytree if item.is_dir() else shutil.copy2)(item, root / item.name)
 
     monkeypatch.setenv("OPENROUTER_API_KEY", "sk-test")
-    monkeypatch.setenv("CROSSPATCH_ARCHIVE", str(tmp_path / "archive.db"))
+    monkeypatch.setenv("CROSSPATCH_ARCHIVE", adresse_archive)
 
     import orchestrator.loop as L
     monkeypatch.setattr(L, "ROOT", root)

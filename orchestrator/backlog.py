@@ -170,6 +170,22 @@ def _mirror(src: Path, dst: Path) -> None:
         shutil.rmtree(f, ignore_errors=True) if f.is_dir() else f.unlink()
 
 
+def _git() -> list[str]:
+    return ["git", *_identite()]
+
+
+def _identite() -> list[str]:
+    """L'identité du commit, passée en `-c` plutôt qu'écrite dans .git/config.
+
+    Un conteneur frais n'a pas d'identité git : sans ça, `git commit` échoue
+    sur « Please tell me who you are » et la promotion casse au moment
+    précis où l'humain vient de dire oui.
+    """
+    nom = os.environ.get("GIT_AUTHOR_NAME", "crosspatch worker")
+    mail = os.environ.get("GIT_AUTHOR_EMAIL", "worker@crosspatch.local")
+    return ["-c", f"user.name={nom}", "-c", f"user.email={mail}"]
+
+
 def _redact(text: str, token: str | None) -> str:
     return text.replace(token, "***") if token else text
 
@@ -207,7 +223,7 @@ def promote(root: Path, gen_id: int, branch: str = "evolution/main") -> None:
     for rel in MUTABLE_DIRS:
         _mirror(cand / rel, root / rel)
     subprocess.run(["git", "add", "-A"], cwd=root, check=True)
-    subprocess.run(["git", "commit", "-m", f"gen {gen_id} (validée)"],
+    subprocess.run([*_git(), "commit", "-m", f"gen {gen_id} (validée)"],
                    cwd=root, check=True)
     _push(root, branch)
 
@@ -233,6 +249,6 @@ def rollback(root: Path, gen_id: int, branch: str = "evolution/main") -> str:
     sha = find_commit(root, gen_id)
     if sha is None:
         raise LookupError(f"aucun commit trouvé pour la génération {gen_id}")
-    subprocess.run(["git", "revert", "--no-edit", sha], cwd=root, check=True)
+    subprocess.run([*_git(), "revert", "--no-edit", sha], cwd=root, check=True)
     _push(root, branch)
     return sha
