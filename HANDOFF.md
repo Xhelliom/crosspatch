@@ -224,10 +224,19 @@ exécute désormais la suite complète sur **18 et 16**, et un test échoue si
 la version déployée sort de cette matrice, ou si `docker-compose.yml` et le
 cluster divergent.
 
-**L'image n'a jamais été construite en local** : le registre Docker est
-bloqué par le proxy réseau de la session où le `Dockerfile` a été écrit. Il
-est relu, pas exécuté — le premier passage de la CI sera la première
-vérification réelle.
+L'image **est construite et publiée**, vérifiée par le premier passage vert
+du workflow (`main`, run 3) : suite de tests sur Postgres 18 et 16, puis
+build et push sur `ghcr.io/xhelliom/crosspatch` en 43 s. Le `Dockerfile`
+n'est donc plus du code jamais exécuté. Ce qui reste non exécuté à ce jour
+tient en deux lignes : tout appel à OpenRouter, et tout démarrage de sandbox
+E2B.
+
+Un mot sur la façon dont la CI a été trouvée cassée, parce que le piège est
+reproductible : elle échouait depuis son premier run alors que la suite
+passait en local. `python -m pytest` met le répertoire courant sur
+`sys.path`, `pytest` non — aucun `from kernel…` ne résolvait sur le runner.
+`pytest.ini` (`pythonpath = .`) le règle ; la leçon est de vérifier avec
+l'invocation exacte de la CI, et de **regarder les runs**.
 
 ## L'UI responsive est un travail humain, pas une tâche d'agent
 
