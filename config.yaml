@@ -6,8 +6,10 @@ sandbox_template: "base"
 # Passer à "" une fois un template dédié construit (≈20 s gagnées par éval).
 sandbox_bootstrap: "pip install -q pytest httpx"
 # Tarif horaire du sandbox, pour que `max_usd` couvre aussi l'exécution et
-# pas seulement les tokens. À caler sur la facture E2B réelle.
-sandbox_usd_per_hour: 0.10
+# pas seulement les tokens. Tarif public E2B pour la forme par défaut
+# (2 vCPU / 512 Mio) : ~0.109 $/h. À recaler sur la facture réelle si tu
+# changes la taille du sandbox.
+sandbox_usd_per_hour: 0.109
 max_usd: 25.0            # plafond dur, vérifié avant chaque appel
 soak_runs: 3             # un bon score une fois, c'est du bruit
 plateau_window: 5
