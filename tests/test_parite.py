@@ -75,3 +75,40 @@ def test_chaque_outil_documente_ce_qu_il_fait(serveur_mcp):
     outils = asyncio.run(serveur_mcp.server.list_tools())
     muets = [t.name for t in outils if not (t.description or "").strip()]
     assert not muets, muets
+
+
+def _chemins_ui() -> set[str]:
+    """Les chemins HTTP appelés par l'UI, y compris en gabarit littéral."""
+    html = (ROOT / "api" / "static" / "index.html").read_text()
+    bruts = re.findall(r'(?:get|post|fetch|EventSource)\(\s*[`"\']([^`"\']*)', html)
+    chemins = set()
+    for b in bruts:
+        b = re.sub(r"\$\{[^}]*\}", "{}", b.split("?")[0])
+        if not b.startswith("/"):
+            continue
+        # `post("/verdict/" + id, …)` : la barre finale marque un paramètre
+        # concaténé, donc le même endpoint que `/verdict/{gen_id}`.
+        if b.endswith("/") and len(b) > 1:
+            b += "{}"
+        chemins.add(_generique(b))
+    return chemins
+
+
+def test_l_ui_n_appelle_que_des_endpoints_existants(routes_api):
+    manquants = {c for c in _chemins_ui()
+                 if c not in routes_api and c + "/{}" not in routes_api}
+    assert not manquants, f"l'UI appelle des endpoints absents : {manquants}"
+
+
+def test_l_ui_couvre_les_memes_fonctions_que_le_mcp(serveur_mcp):
+    """Invariant 6 : ce qui se pilote depuis le téléphone se pilote aussi
+    depuis une session Claude Code, et réciproquement."""
+    src = (ROOT / "mcp" / "server.py").read_text()
+    par_mcp = {_generique(m) for m in re.findall(r'_(?:get|post)\(f?"([^"]+)"', src)}
+    par_ui = _chemins_ui()
+    # `/transcript` côté MCP, `/stream` côté UI : même fil, deux transports.
+    equivalents = {"/transcript", "/stream"}
+    manque_ui = par_mcp - par_ui - equivalents
+    manque_mcp = par_ui - par_mcp - equivalents - {"/"}
+    assert not manque_ui, f"exposé au MCP mais absent de l'UI : {manque_ui}"
+    assert not manque_mcp, f"exposé à l'UI mais absent du MCP : {manque_mcp}"

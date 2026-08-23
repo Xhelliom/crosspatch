@@ -108,6 +108,61 @@ button.go:hover{background:rgba(88,191,166,.1)}
 .empty b{display:block;color:var(--bone);font-family:var(--display);
   font-weight:500;font-size:15px;margin-bottom:6px}
 
+/* ---- panneau : backlog, directions, contrôle ---- */
+.iconbtn{
+  border:1px solid var(--edge);border-radius:8px;background:transparent;
+  color:var(--mute);padding:5px 9px;font-size:11px;line-height:1;
+}
+.iconbtn[aria-expanded="true"]{color:var(--bone);border-color:var(--bone)}
+
+.sheet{
+  position:fixed;inset:0;z-index:30;background:var(--ground);
+  display:flex;flex-direction:column;
+  transform:translateY(100%);transition:transform .25s ease;
+  visibility:hidden;
+}
+.sheet.open{transform:none;visibility:visible}
+.sheet header{position:static;border-bottom:1px solid var(--edge)}
+.tabs{display:flex;gap:6px}
+.tabs button{flex:1;padding:9px 4px;border-radius:8px}
+.tabs button[aria-selected="true"]{border-color:var(--bone);color:var(--bone)}
+.sheet .body{flex:1;overflow-y:auto;padding:14px 16px 40px;
+  padding-bottom:calc(40px + env(safe-area-inset-bottom))}
+.pane[hidden]{display:none}
+
+.card{
+  background:var(--raised);border:1px solid var(--edge);border-radius:11px;
+  padding:11px 12px;margin-bottom:9px;
+}
+.card h3{font-size:12px;font-weight:500;line-height:1.4;margin-bottom:4px}
+.card .meta{font-size:10px;color:var(--mute);display:flex;flex-wrap:wrap;gap:9px}
+.card p{font-size:11px;color:var(--mute);margin-top:6px}
+.tag{
+  font-size:9px;letter-spacing:.08em;text-transform:uppercase;
+  border:1px solid var(--edge);border-radius:5px;padding:1px 5px;
+}
+.tag.active{color:var(--b);border-color:var(--b)}
+.tag.wait{color:var(--bone);border-color:var(--bone)}
+.tag.off{color:var(--mute)}
+.rowacts{display:flex;gap:7px;margin-top:9px}
+.rowacts button{flex:1;padding:8px 4px}
+
+form.newdir{margin:14px 0 6px;display:flex;flex-direction:column;gap:7px}
+form.newdir input,form.newdir textarea{
+  font-family:var(--mono);font-size:12px;color:var(--bone);
+  background:var(--raised);border:1px solid var(--edge);border-radius:9px;
+  padding:10px 11px;resize:vertical;
+}
+form.newdir textarea{min-height:64px}
+.hint{font-size:10px;color:var(--mute);margin-bottom:10px}
+.ctlgrid{display:grid;grid-template-columns:1fr 1fr;gap:7px;margin-bottom:14px}
+.ctlgrid button{padding:13px 4px}
+.state{
+  display:flex;justify-content:space-between;font-size:11px;color:var(--mute);
+  border-bottom:1px solid var(--edge);padding:8px 0;
+}
+.state b{color:var(--bone);font-weight:500}
+
 @media(prefers-reduced-motion:reduce){*{transition:none!important}}
 </style>
 </head>
@@ -116,12 +171,17 @@ button.go:hover{background:rgba(88,191,166,.1)}
 <header>
   <div class="brand">
     <h1>crosspatch</h1>
-    <div class="run" id="run">—</div>
+    <div style="display:flex;align-items:center;gap:10px">
+      <div class="run" id="run">—</div>
+      <button class="iconbtn" id="open" aria-expanded="false"
+              aria-controls="sheet">panneau</button>
+    </div>
   </div>
   <div class="rail" id="rail"></div>
   <div class="readout">
     <div><span>réussite</span><b id="score">—</b></div>
     <div><span>génération</span><b id="gen">—</b></div>
+    <div><span>acceptation</span><b id="accept">—</b></div>
     <div class="spend" id="spendbox"><span>dépensé</span><b id="spend">—</b></div>
   </div>
 </header>
@@ -131,10 +191,58 @@ button.go:hover{background:rgba(88,191,166,.1)}
   Lance le worker : le fil apparaît ici, tour par tour.</div>
 </main>
 
+<div class="sheet" id="sheet" role="dialog" aria-label="Panneau de pilotage">
+  <header>
+    <div class="brand">
+      <h1 id="sheettitle">panneau</h1>
+      <button class="iconbtn" id="close">fermer</button>
+    </div>
+    <div class="tabs" role="tablist">
+      <button role="tab" data-pane="backlog" aria-selected="true">backlog</button>
+      <button role="tab" data-pane="dirs" aria-selected="false">directions</button>
+      <button role="tab" data-pane="ctl" aria-selected="false">contrôle</button>
+    </div>
+  </header>
+  <div class="body">
+    <section class="pane" id="pane-backlog">
+      <p class="hint">Écrit par les agents en phase d'idéation, jamais à la
+        main. Trié par gain × confiance / coût.</p>
+      <div id="backlog"></div>
+    </section>
+
+    <section class="pane" id="pane-dirs" hidden>
+      <p class="hint">Les grandes idées. Une direction proposée par un agent
+        reste en attente jusqu'à ton arbitrage.</p>
+      <div id="dirs"></div>
+      <form class="newdir" id="newdir">
+        <input name="title" placeholder="Nouvelle direction — titre" required>
+        <textarea name="intent" placeholder="Ce que cet axe couvre, et pourquoi"></textarea>
+        <button type="submit">Poser cette direction</button>
+      </form>
+    </section>
+
+    <section class="pane" id="pane-ctl" hidden>
+      <div class="ctlgrid">
+        <button data-act="pause">Mettre en pause</button>
+        <button data-act="resume">Reprendre</button>
+        <button data-act="stop">Arrêter le run</button>
+        <button id="refresh">Rafraîchir</button>
+      </div>
+      <div class="state"><span>état</span><b id="ctlstate">—</b></div>
+      <div class="state"><span>modèle</span><b id="ctlmodel">—</b></div>
+      <div class="state"><span>dépensé / plafond</span><b id="ctlspend">—</b></div>
+      <div class="state"><span>acceptation A / B</span><b id="ctlaccept">—</b></div>
+      <p class="hint" style="margin-top:14px">Générations intégrées —
+        annulables par <code>git revert</code>.</p>
+      <div id="completed"></div>
+    </section>
+  </div>
+</div>
+
 <div class="gate" id="gate">
   <p id="gatetext"></p>
   <div class="acts">
-    <button class="go" data-v="ok">Intégrer</button>
+    <button class="go" id="ok" data-v="ok">Intégrer</button>
     <button data-v="scope">Hors sujet</button>
     <button data-v="risky">Risqué</button>
     <button data-v="useless">Sans effet</button>
@@ -143,21 +251,36 @@ button.go:hover{background:rgba(88,191,166,.1)}
 
 <script>
 const $ = s => document.querySelector(s);
+const $$ = s => [...document.querySelectorAll(s)];
 let token = sessionStorage.getItem("crosspatch_token");
 if (!token) { token = prompt("Jeton de contrôle") || ""; sessionStorage.setItem("crosspatch_token", token); }
 const H = { Authorization: "Bearer " + token };
-let pending = null, cursor = 0, seeded = false;
+const JH = { ...H, "Content-Type": "application/json" };
+let pending = null, cursor = 0, seeded = false, last = null;
 
+const get = p => fetch(p, { headers: H }).then(r => r.json());
+const post = (p, body) => fetch(p, { method: "POST", headers: JH, body: JSON.stringify(body) });
+const pct = v => v === null || v === undefined ? "—" : Math.round(v * 100) + "%";
+const el = (tag, cls, txt) => {
+  const n = document.createElement(tag);
+  if (cls) n.className = cls;
+  if (txt !== undefined) n.textContent = txt;
+  return n;
+};
+
+/* ---- bandeau et rail ---- */
 async function poll() {
   try {
-    const s = await (await fetch("/state", { headers: H })).json();
+    const s = last = await get("/state");
     $("#run").textContent = s.run_id;
     $("#score").textContent = s.best?.scores ? (JSON.parse(s.best.scores).pass_rate).toFixed(2) : "—";
     $("#gen").textContent = s.recent.length ? "#" + s.recent[0].id : "—";
+    $("#accept").textContent = pct(s.acceptance_rate?.overall);
     $("#spend").textContent = "$" + s.spent_usd.toFixed(2);
     $("#spendbox").classList.toggle("hot", s.spent_usd > s.max_usd * 0.8);
     drawRail(s.recent);
     setGate(s.awaiting_human[0] || null);
+    drawControl(s);
   } catch (e) { /* le worker peut être à l'arrêt : on réessaie */ }
 }
 
@@ -165,9 +288,9 @@ function drawRail(recent) {
   const rail = $("#rail");
   rail.innerHTML = "";
   [...recent].reverse().forEach(g => {
-    const n = document.createElement("div");
+    const n = el("div");
     const dead = ["failed", "rejected"].includes(g.status);
-    const wait = g.status === "awaiting_human";
+    const wait = ["awaiting_human", "awaiting_gate"].includes(g.status);
     n.className = "notch " + g.role_proposer + (dead ? " dead" : wait ? " wait" : "");
     const p = g.scores ? JSON.parse(g.scores).pass_rate : 0;
     n.style.height = dead ? "8px" : Math.max(4, p * 42) + "px";
@@ -177,43 +300,180 @@ function drawRail(recent) {
   rail.scrollLeft = rail.scrollWidth;
 }
 
+/* ---- barre de décision ----
+   `stage` dit ce que « oui » veut dire : autoriser l'évaluation d'un patch
+   que le garde-fou a jugé sensible, ou intégrer un patch déjà mesuré. */
 function setGate(g) {
   pending = g;
-  $("#gate").classList.toggle("open", !!g);
-  if (g) {
-    const d = g.scores ? JSON.parse(g.scores).delta : null;
-    $("#gatetext").innerHTML = `Génération <b>#${g.id}</b>, proposée par <b>${g.role_proposer}</b>`
-      + (d !== null ? ` · réussite <b>${d >= 0 ? "+" : ""}${d.toFixed(3)}</b>` : "")
-      + ` · risque <b>${g.risk}</b>`;
-  }
+  $("#gate").classList.toggle("open", !!g && !$("#sheet").classList.contains("open"));
+  if (!g) return;
+  const gate = g.stage === "gate";
+  $("#ok").textContent = gate ? "Autoriser" : "Intégrer";
+  const d = g.scores ? JSON.parse(g.scores).delta : null;
+  $("#gatetext").innerHTML =
+    (gate ? "Autoriser l'évaluation de " : "Intégrer ")
+    + `<b>#${g.id}</b>, proposée par <b>${g.role_proposer}</b>`
+    + (d !== null && d !== undefined ? ` · réussite <b>${d >= 0 ? "+" : ""}${d.toFixed(3)}</b>` : "")
+    + ` · risque <b>${g.risk}</b>`
+    + (g.note ? ` · ${g.note}` : "");
 }
 
-document.querySelectorAll(".acts button").forEach(b => b.onclick = async () => {
+$$(".acts button").forEach(b => b.onclick = async () => {
   if (!pending) return;
   const id = pending.id;
   setGate(null);
-  await fetch("/verdict/" + id, {
-    method: "POST", headers: { ...H, "Content-Type": "application/json" },
-    body: JSON.stringify({ verdict: b.dataset.v })
-  });
+  await post("/verdict/" + id, { verdict: b.dataset.v });
   poll();
 });
 
+/* ---- panneau ---- */
+const sheet = $("#sheet");
+function openSheet(on) {
+  sheet.classList.toggle("open", on);
+  $("#open").setAttribute("aria-expanded", on);
+  $("#gate").classList.toggle("open", !on && !!pending);
+  if (on) refreshPanes();
+}
+$("#open").onclick = () => openSheet(true);
+$("#close").onclick = () => openSheet(false);
+$("#refresh").onclick = () => { poll(); refreshPanes(); };
+
+$$(".tabs button").forEach(b => b.onclick = () => {
+  $$(".tabs button").forEach(o => o.setAttribute("aria-selected", o === b));
+  $$(".pane").forEach(p => p.hidden = p.id !== "pane-" + b.dataset.pane);
+});
+
+function refreshPanes() { drawBacklog(); drawDirections(); }
+
+/* ---- backlog ---- */
+async function drawBacklog() {
+  const box = $("#backlog");
+  box.innerHTML = "";
+  let items = [];
+  try { items = (await get("/backlog")).items || []; } catch (e) { }
+  if (!items.length) {
+    box.appendChild(el("div", "empty", "Les agents n'ont encore rien proposé."));
+    return;
+  }
+  const live = items.filter(i => ["submitted", "working"].includes(i.state));
+  const done = items.filter(i => !live.includes(i));
+  [...live, ...done].forEach(i => {
+    const c = el("div", "card");
+    c.appendChild(el("h3", null, `${i.id} — ${i.title}`));
+    const m = el("div", "meta");
+    m.appendChild(el("span", "tag " + (i.state === "submitted" ? "wait"
+      : i.state === "completed" ? "active" : "off"), i.state));
+    if (i.direction_id) m.appendChild(el("span", null, i.direction_id));
+    if (i.goal) m.appendChild(el("span", null, "goal " + i.goal));
+    if (i.expected_gain !== undefined)
+      m.appendChild(el("span", null, `gain ${i.expected_gain} · conf ${i.confidence}`));
+    if (i.author) m.appendChild(el("span", null, "par " + i.author));
+    c.appendChild(m);
+    if (i.hypothesis) c.appendChild(el("p", null, i.hypothesis));
+    if (i.evidence) c.appendChild(el("p", null, "↳ " + i.evidence));
+    box.appendChild(c);
+  });
+}
+
+/* ---- directions ---- */
+async function drawDirections() {
+  const box = $("#dirs");
+  box.innerHTML = "";
+  let dirs = [];
+  try { dirs = (await get("/directions")).directions || []; } catch (e) { }
+  dirs.forEach(d => {
+    const c = el("div", "card");
+    c.appendChild(el("h3", null, `${d.id} — ${d.title}`));
+    const m = el("div", "meta");
+    m.appendChild(el("span", "tag " + (d.state === "active" ? "active"
+      : d.state === "input_required" ? "wait" : "off"), d.state));
+    m.appendChild(el("span", null, "par " + d.author));
+    c.appendChild(m);
+    if (d.intent) c.appendChild(el("p", null, d.intent.trim()));
+    if (d.state === "input_required") {
+      const acts = el("div", "rowacts");
+      const oui = el("button", "go", "Ouvrir cet axe");
+      const non = el("button", null, "Refuser");
+      oui.onclick = () => verdictDir(d.id, "active");
+      non.onclick = () => verdictDir(d.id, "rejected");
+      acts.append(oui, non);
+      c.appendChild(acts);
+    } else if (d.state === "active") {
+      const acts = el("div", "rowacts");
+      const fin = el("button", null, "Clore cet axe");
+      fin.onclick = () => verdictDir(d.id, "retired");
+      acts.appendChild(fin);
+      c.appendChild(acts);
+    }
+    box.appendChild(c);
+  });
+}
+
+async function verdictDir(id, state) {
+  await post(`/directions/${id}/verdict`, { state });
+  drawDirections();
+}
+
+$("#newdir").onsubmit = async e => {
+  e.preventDefault();
+  const f = new FormData(e.target);
+  if (!f.get("title")) return;
+  await post("/directions", { title: f.get("title"), intent: f.get("intent") || "" });
+  e.target.reset();
+  drawDirections();
+};
+
+/* ---- contrôle ---- */
+function drawControl(s) {
+  $("#ctlstate").textContent = s.stopped ? "arrêté" : s.paused ? "en pause" : "en marche";
+  $("#ctlmodel").textContent = s.model;
+  $("#ctlspend").textContent = `$${s.spent_usd.toFixed(2)} / $${s.max_usd}`;
+  const a = s.acceptance_rate || {};
+  $("#ctlaccept").textContent = `${pct(a.A)} / ${pct(a.B)} (n=${a.n ?? 0})`;
+
+  const box = $("#completed");
+  box.innerHTML = "";
+  const done = (s.recent || []).filter(g => g.status === "completed");
+  if (!done.length) {
+    box.appendChild(el("div", "empty", "Aucune génération intégrée."));
+    return;
+  }
+  done.forEach(g => {
+    const c = el("div", "card");
+    c.appendChild(el("h3", null, `#${g.id} — proposée par ${g.role_proposer}`));
+    if (g.note) c.appendChild(el("p", null, g.note));
+    const acts = el("div", "rowacts");
+    const b = el("button", null, "Annuler (git revert)");
+    b.onclick = async () => {
+      b.disabled = true;
+      await post("/control", { action: "rollback", gen_id: g.id });
+      poll();
+    };
+    acts.appendChild(b);
+    c.appendChild(acts);
+    box.appendChild(c);
+  });
+}
+
+$$(".ctlgrid button[data-act]").forEach(b => b.onclick = async () => {
+  await post("/control", { action: b.dataset.act });
+  poll();
+});
+
+/* ---- fil ---- */
 function line(e) {
   if (!seeded) { $("#thread").innerHTML = ""; seeded = true; }
-  const el = document.createElement("div");
+  const n = el("div");
   if (e.actor === "A" || e.actor === "B") {
-    el.className = "turn " + e.actor;
-    el.innerHTML = `<div class="who">agent ${e.actor}</div>
-      <div class="bubble"></div>`;
-    el.querySelector(".bubble").textContent = e.body;
+    n.className = "turn " + e.actor;
+    n.appendChild(el("div", "who", "agent " + e.actor));
+    n.appendChild(el("div", "bubble", e.body));
   } else {
     const up = /→ 0?\.\d+/.test(e.body) && !/régression/.test(e.body);
-    el.className = "verdictline " + (e.kind === "error" ? "down" : up ? "up" : "");
-    el.innerHTML = `<b></b>`;
-    el.querySelector("b").textContent = e.body;
+    n.className = "verdictline " + (e.kind === "error" ? "down" : up ? "up" : "");
+    n.appendChild(el("b", null, e.body));
   }
-  $("#thread").appendChild(el);
+  $("#thread").appendChild(n);
   window.scrollTo({ top: document.body.scrollHeight, behavior: "smooth" });
 }
 

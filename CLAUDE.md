@@ -82,12 +82,23 @@ mission/       OBJECTIVE.md (gelé) + BACKLOG.yaml (géré par les agents)
 Control plane en un conteneur, exécution déléguée à E2B. Même code path en
 local (`docker compose up`) et en cloud (`git push`).
 
+**L'API et le worker ne partagent aucune mémoire** : ce sont deux conteneurs.
+L'API écrit des intentions dans la table `control` de l'archive
+(`paused`, `stop`, `verdict:<gen>`, `rollback:<gen>`), le worker les relit à
+chaque itération et reste seul à exécuter quoi que ce soit. Ne pas répondre à
+un problème de synchronisation en fusionnant les deux services : la séparation
+web / worker est ce qui permet le scale-to-zero en cloud.
+
 ## Conventions
 
 - Python 3.12, `from __future__ import annotations`, type hints partout.
 - Prose et commentaires en français, identifiants en anglais.
 - États du backlog alignés sur A2A : `submitted`, `working`, `input_required`,
   `completed`, `failed`, `canceled`.
+- Deux gates humains, deux statuts distincts : `awaiting_gate` demande
+  l'autorisation d'évaluer un patch que le garde-fou a jugé sensible,
+  `awaiting_human` demande l'intégration d'un patch déjà mesuré. « Oui » n'y
+  veut pas dire la même chose ; `/state` expose `stage` pour les distinguer.
 - Le modèle des agents est **volontairement milieu de gamme**. Si tu proposes
   de passer à un modèle plus fort pour améliorer les scores, tu supprimes
   l'expérience : le headroom est le sujet.
@@ -97,16 +108,20 @@ local (`docker compose up`) et en cloud (`git push`).
 | Fonction | HTTP | MCP | UI |
 |---|---|---|---|
 | État du run | `GET /state` | `get_state` | bandeau + rail |
-| Taux d'acceptation | dans `GET /state` | dans `get_state` | (à faire) |
-| Backlog | `GET /backlog` | `get_backlog` | (à faire) |
-| Grandes idées | `GET /directions` | `get_directions` | (à faire) |
-| Poser une direction | `POST /directions` | `add_direction` | (à faire) |
-| Trancher une direction | `POST /directions/{id}/verdict` | `set_direction_state` | (à faire) |
+| Taux d'acceptation | dans `GET /state` | dans `get_state` | bandeau + panneau › contrôle |
+| Backlog | `GET /backlog` | `get_backlog` | panneau › backlog |
+| Grandes idées | `GET /directions` | `get_directions` | panneau › directions |
+| Poser une direction | `POST /directions` | `add_direction` | panneau › directions (formulaire) |
+| Trancher une direction | `POST /directions/{id}/verdict` | `set_direction_state` | panneau › directions (boutons) |
 | Fil de discussion | `GET /transcript`, `GET /stream` | `get_transcript` | fil principal |
 | Verdict humain | `POST /verdict/{id}` | `set_verdict` | barre de décision |
-| Pause / reprise / arrêt | `POST /control` | `control` | (à faire) |
+| Pause / reprise / arrêt | `POST /control` | `control` | panneau › contrôle |
+| Annuler une génération | `POST /control` (`rollback`) | `control` | panneau › contrôle |
 
-Une ligne incomplète est une dette, pas une étape.
+Une ligne incomplète est une dette, pas une étape. `tests/test_parite.py`
+rend l'invariant exécutable : il compare les chemins appelés par
+`api/static/index.html` et par `mcp/server.py` aux routes déclarées dans
+`api/main.py`, et échoue si une colonne prend du retard sur une autre.
 
 `acceptance_rate` (part des propositions qui passent le harness sans régression)
 est calculé dans `kernel/archive.py`, donc immuable. C'est la métrique de
