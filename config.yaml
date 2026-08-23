@@ -2,6 +2,12 @@ run_id: "2026-08-23-001"
 model: "mistralai/mistral-medium-3.1"   # milieu de gamme : le headroom est le sujet
 archive_path: "data/archive.db"
 sandbox_template: "base"
+# Le template `base` n'a ni pytest ni httpx : on les installe au démarrage.
+# Passer à "" une fois un template dédié construit (≈20 s gagnées par éval).
+sandbox_bootstrap: "pip install -q pytest httpx"
+# Tarif horaire du sandbox, pour que `max_usd` couvre aussi l'exécution et
+# pas seulement les tokens. À caler sur la facture E2B réelle.
+sandbox_usd_per_hour: 0.10
 max_usd: 25.0            # plafond dur, vérifié avant chaque appel
 soak_runs: 3             # un bon score une fois, c'est du bruit
 plateau_window: 5

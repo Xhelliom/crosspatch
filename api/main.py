@@ -21,10 +21,17 @@ from orchestrator import directions as dr
 
 ROOT = Path(__file__).resolve().parents[1]
 cfg = yaml.safe_load((ROOT / "config.yaml").read_text())
-archive = Archive(cfg["archive_path"])
+# CROSSPATCH_ARCHIVE permet de pointer une autre base sans toucher
+# config.yaml : indispensable pour tester, utile pour rejouer un run.
+archive = Archive(os.environ.get("CROSSPATCH_ARCHIVE") or cfg["archive_path"])
 app = FastAPI(title="crosspatch")
 
-_loop = None  # injecté par le worker
+# Pas de référence au worker : il tourne dans un autre conteneur et ne
+# partage aucune mémoire avec l'API. Tout passe par la table `control` de
+# l'archive — l'API écrit des intentions, le worker est seul à exécuter.
+# Ne pas « corriger » ça en fusionnant les deux services : la séparation
+# web / worker est ce qui permet le scale-to-zero en cloud.
+VERDICTS = ("ok", "scope", "risky", "useless")
 
 
 def auth(authorization: str = Header("")) -> None:
@@ -39,13 +46,18 @@ def state() -> dict:
     return {
         "run_id": cfg["run_id"],
         "model": cfg["model"],
-        "paused": _loop.paused if _loop else None,
+        "paused": archive.flag("paused"),
+        "stopped": archive.flag("stop"),
         "spent_usd": round(archive.spent(), 4),
         "max_usd": cfg["max_usd"],
         "best": dict(best) if best else None,
         "acceptance_rate": archive.acceptance_rate(cfg["run_id"]),
         "awaiting_human": [
-            dict(g) for g in recent if g["status"] == "awaiting_human"
+            # `stage` dit ce que « oui » veut dire ici : autoriser
+            # l'évaluation d'un patch sensible, ou intégrer un patch mesuré.
+            {**dict(g),
+             "stage": "gate" if g["status"] == "awaiting_gate" else "promote"}
+            for g in archive.awaiting(cfg["run_id"])
         ],
         "recent": [
             {k: g[k] for k in ("id", "role_proposer", "status", "risk", "note")}
@@ -97,30 +109,53 @@ def direction_verdict(dir_id: str, body: dict) -> dict:
 
 @app.post("/verdict/{gen_id}", dependencies=[Depends(auth)])
 def verdict(gen_id: int, body: dict) -> dict:
-    """body: {"verdict": "ok" | "scope" | "risky" | "useless"}"""
+    """body: {"verdict": "ok" | "scope" | "risky" | "useless"}
+
+    L'API ne tranche pas : elle dépose l'intention, le worker l'exécute au
+    tour de boucle suivant. Sur une génération `awaiting_gate`, « ok »
+    autorise l'évaluation ; sur `awaiting_human`, il intègre.
+    """
     v = body.get("verdict")
-    if v not in ("ok", "scope", "risky", "useless"):
+    if v not in VERDICTS:
         raise HTTPException(400, "verdict inconnu")
-    _loop.human_verdict(gen_id, v)
+    row = archive.get(gen_id)
+    if row is None:
+        raise HTTPException(404, "génération inconnue")
+    if row["status"] not in ("awaiting_gate", "awaiting_human"):
+        raise HTTPException(409, f"génération {gen_id} en état {row['status']}")
+    archive.set_control(f"verdict:{gen_id}", v)
     archive.say(gen_id, "human", "verdict", v)
-    return {"ok": True, "gen_id": gen_id, "verdict": v}
+    return {"ok": True, "gen_id": gen_id, "verdict": v, "queued": True}
 
 
 @app.post("/control", dependencies=[Depends(auth)])
 def control(body: dict) -> dict:
-    """body: {"action": "pause" | "resume" | "stop" | "rollback", "gen_id": 12}"""
+    """body: {"action": "pause" | "resume" | "stop" | "rollback", "gen_id": 12}
+
+    Toutes les actions sont des écritures en base. Le worker les relit à
+    chaque itération : rien n'est exécuté depuis ce processus.
+    """
     action = body.get("action")
     if action == "pause":
-        _loop.paused = True
+        archive.set_control("paused", "1")
     elif action == "resume":
-        _loop.paused = False
+        archive.set_control("paused", "0")
     elif action == "stop":
-        _loop.stop = True
+        archive.set_control("stop", "1")
     elif action == "rollback":
-        raise HTTPException(501, "rollback : à brancher sur git revert")
+        gen_id = body.get("gen_id")
+        if not isinstance(gen_id, int):
+            raise HTTPException(400, "rollback : gen_id manquant")
+        row = archive.get(gen_id)
+        if row is None:
+            raise HTTPException(404, "génération inconnue")
+        if row["status"] != "completed":
+            raise HTTPException(409, "seule une génération intégrée s'annule")
+        archive.set_control(f"rollback:{gen_id}", "1")
     else:
         raise HTTPException(400, "action inconnue")
-    return {"ok": True, "action": action}
+    archive.say(body.get("gen_id"), "human", "verdict", f"contrôle : {action}")
+    return {"ok": True, "action": action, "queued": True}
 
 
 @app.get("/transcript", dependencies=[Depends(auth)])

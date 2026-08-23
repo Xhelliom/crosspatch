@@ -16,8 +16,8 @@ CREATE TABLE IF NOT EXISTS generations (
   item_id       TEXT,                -- item du backlog traité
   diff          TEXT,
   scores        TEXT,                -- json {pass_rate, tokens, wall_time}
-  status        TEXT NOT NULL,       -- proposed|awaiting_human|running|
-                                     -- completed|failed|rejected
+  status        TEXT NOT NULL,       -- proposed|awaiting_gate|running|
+                                     -- awaiting_human|completed|failed|rejected
   risk          TEXT DEFAULT 'low',
   human_verdict TEXT,                -- ok | scope | risky | useless
   note          TEXT,
@@ -29,6 +29,11 @@ CREATE TABLE IF NOT EXISTS spend (
   kind     TEXT,                     -- llm | sandbox
   usd      REAL NOT NULL,
   at       REAL NOT NULL
+);
+CREATE TABLE IF NOT EXISTS control (
+  key   TEXT PRIMARY KEY,        -- paused | stop | verdict:<gen> | rollback:<gen>
+  value TEXT NOT NULL,
+  at    REAL NOT NULL
 );
 CREATE TABLE IF NOT EXISTS events (
   id     INTEGER PRIMARY KEY,
@@ -86,6 +91,29 @@ class Archive:
             f"UPDATE generations SET {sets} WHERE id=?", (*fields.values(), gen_id)
         )
         self.db.commit()
+
+    def get(self, gen_id: int) -> sqlite3.Row | None:
+        """La génération visée, pas la plus récente.
+
+        `recent(...)[0]` renvoyait la dernière ligne insérée, qui n'est pas
+        celle dont on valide le verdict dès qu'un tour s'est intercalé.
+        """
+        return self.db.execute(
+            "SELECT * FROM generations WHERE id=?", (gen_id,)
+        ).fetchone()
+
+    def awaiting(self, run_id: str) -> list[sqlite3.Row]:
+        """Tout ce qui attend un arbitrage humain, du plus ancien au plus récent.
+
+        Deux étapes distinctes se retrouvent ici : `awaiting_gate` demande
+        l'autorisation d'évaluer un patch que le garde-fou a jugé sensible,
+        `awaiting_human` demande l'intégration d'un patch déjà mesuré.
+        """
+        return self.db.execute(
+            "SELECT * FROM generations WHERE run_id=? AND status IN "
+            "('awaiting_gate','awaiting_human') ORDER BY id",
+            (run_id,),
+        ).fetchall()
 
     def best(self, run_id: str) -> sqlite3.Row | None:
         return self.db.execute(
@@ -147,6 +175,41 @@ class Archive:
         ).fetchall()
         vals = [r["p"] for r in rows if r["p"] is not None]
         return len(vals) >= window and (max(vals) - min(vals)) < eps
+
+    # --- plan de contrôle ------------------------------------------------
+    # L'API et le worker sont deux conteneurs distincts : ils ne partagent
+    # aucune mémoire, seulement cette base. L'API écrit des intentions, le
+    # worker est la seule chose qui exécute. Ne pas fusionner les deux
+    # services pour contourner ça : la séparation web / worker est ce qui
+    # permet le scale-to-zero en cloud.
+
+    def set_control(self, key: str, value: str) -> None:
+        self.db.execute(
+            "INSERT INTO control (key,value,at) VALUES (?,?,?) "
+            "ON CONFLICT(key) DO UPDATE SET value=excluded.value, at=excluded.at",
+            (key, value, time.time()),
+        )
+        self.db.commit()
+
+    def get_control(self, key: str, default: str | None = None) -> str | None:
+        r = self.db.execute(
+            "SELECT value FROM control WHERE key=?", (key,)
+        ).fetchone()
+        return r["value"] if r else default
+
+    def flag(self, key: str) -> bool:
+        return self.get_control(key, "0") == "1"
+
+    def pending(self, prefix: str) -> list[tuple[str, str]]:
+        """Les intentions déposées par l'API et pas encore consommées."""
+        return [(r["key"], r["value"]) for r in self.db.execute(
+            "SELECT key,value FROM control WHERE key LIKE ? ORDER BY at",
+            (f"{prefix}%",),
+        ).fetchall()]
+
+    def clear_control(self, key: str) -> None:
+        self.db.execute("DELETE FROM control WHERE key=?", (key,))
+        self.db.commit()
 
     # --- budget ----------------------------------------------------------
     def charge(self, gen_id: int | None, kind: str, usd: float) -> None:

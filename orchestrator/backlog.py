@@ -3,10 +3,17 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
 import subprocess
 from pathlib import Path
 
 import yaml
+
+from kernel.guard import MUTABLE
+
+# Les dossiers que `promote` recopie du candidat vers le dépôt : exactement
+# la zone que le garde-fou déclare modifiable, pas un octet de plus.
+MUTABLE_DIRS = tuple(m.rstrip("/") for m in MUTABLE)
 
 # submitted → working → input-required → completed | failed | canceled
 STATES = ("submitted", "working", "input_required",
@@ -115,17 +122,92 @@ def render(ctx: dict) -> str:
     return json.dumps(ctx, ensure_ascii=False, indent=2, default=str)
 
 
-def apply_patch(workspace: Path, diff: str) -> None:
-    subprocess.run(["git", "apply", "--unidiff-zero", "-"],
-                   cwd=workspace, input=diff.encode(), check=True)
+def apply_patch(workspace: Path, diff: str) -> tuple[bool, str]:
+    """Applique un diff unifié. Renvoie (ok, stderr) — ne lève jamais.
+
+    `check=True` faisait remonter une `CalledProcessError` jusqu'à `run()`,
+    qui ne rattrape que `Budget` : le premier diff mal formé tuait le worker.
+    Or un modèle milieu de gamme en produit régulièrement — c'est le cas
+    normal, et le message de git est une donnée utile au tour suivant.
+
+    `--unidiff-zero` parce que le modèle produit des offsets de ligne faux ;
+    `git apply` ne réclame pas de dépôt git, un simple dossier suffit.
+    """
+    if not diff.endswith("\n"):
+        diff += "\n"          # git apply refuse un diff sans fin de ligne
+    p = subprocess.run(["git", "apply", "--unidiff-zero", "-"],
+                       cwd=workspace, input=diff.encode(),
+                       capture_output=True)
+    return p.returncode == 0, p.stderr.decode()[-800:]
 
 
-def promote(root: Path, gen_id: int) -> None:
-    """Commit + push. Le redéploiement recharge le code, sans hot-patch."""
+def _mirror(src: Path, dst: Path) -> None:
+    """Recopie src sur dst à l'identique, y compris les suppressions.
+
+    Remplace `rsync -a --delete` : une dépendance système de moins, et
+    surtout quelque chose de testable sans conteneur.
+    """
+    if not src.exists():
+        return
+    dst.mkdir(parents=True, exist_ok=True)
+    keep: set[Path] = set()
+    for f in src.rglob("*"):
+        if "__pycache__" in f.parts:
+            continue
+        rel = f.relative_to(src)
+        keep.add(rel)
+        out = dst / rel
+        if f.is_dir():
+            out.mkdir(parents=True, exist_ok=True)
+        else:
+            out.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(f, out)
+    for f in sorted(dst.rglob("*"), reverse=True):
+        rel = f.relative_to(dst)
+        if "__pycache__" in f.parts or rel in keep:
+            continue
+        shutil.rmtree(f, ignore_errors=True) if f.is_dir() else f.unlink()
+
+
+def promote(root: Path, gen_id: int, branch: str = "evolution/main") -> None:
+    """Commit + push. Le redéploiement recharge le code, sans hot-patch.
+
+    Le push vise une branche `evolution/*`, jamais `main` : le worker pousse
+    du code écrit par un modèle, il ne doit pas pouvoir déplacer la branche
+    de référence.
+    """
     cand = root / "candidates" / str(gen_id)
-    subprocess.run(["rsync", "-a", "--delete",
-                    f"{cand}/orchestrator/", f"{root}/orchestrator/"], check=True)
+    for rel in MUTABLE_DIRS:
+        _mirror(cand / rel, root / rel)
     subprocess.run(["git", "add", "-A"], cwd=root, check=True)
     subprocess.run(["git", "commit", "-m", f"gen {gen_id} (validée)"],
                    cwd=root, check=True)
-    subprocess.run(["git", "push"], cwd=root, check=True)
+    subprocess.run(["git", "push", "origin", f"HEAD:refs/heads/{branch}"],
+                   cwd=root, check=True)
+
+
+def find_commit(root: Path, gen_id: int) -> str | None:
+    """Le commit produit par `promote` pour cette génération."""
+    p = subprocess.run(
+        ["git", "log", "--format=%H %s", "-n", "200"],
+        cwd=root, capture_output=True, text=True, check=True)
+    for line in p.stdout.splitlines():
+        sha, _, subject = line.partition(" ")
+        if subject.startswith(f"gen {gen_id} "):
+            return sha
+    return None
+
+
+def rollback(root: Path, gen_id: int, branch: str = "evolution/main") -> str:
+    """Annule une génération promue, par `git revert` — jamais par reset.
+
+    L'historique reste vrai : on voit qu'une génération a été intégrée puis
+    annulée, ce qui est précisément ce qu'on veut pouvoir relire.
+    """
+    sha = find_commit(root, gen_id)
+    if sha is None:
+        raise LookupError(f"aucun commit trouvé pour la génération {gen_id}")
+    subprocess.run(["git", "revert", "--no-edit", sha], cwd=root, check=True)
+    subprocess.run(["git", "push", "origin", f"HEAD:refs/heads/{branch}"],
+                   cwd=root, check=True)
+    return sha

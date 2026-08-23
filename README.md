@@ -33,13 +33,17 @@ délégué à E2B, donc le code path est identique en local et en cloud.
 
 ```json
 { "mcpServers": { "crosspatch": {
-    "command": "python", "args": ["-m", "mcp.server"],
+    "command": "python", "args": ["mcp/server.py"],
     "env": { "CROSSPATCH_API": "https://<ton-app>", "CONTROL_TOKEN": "..." }
 }}}
 ```
 
-Outils exposés : `get_state`, `get_backlog`, `get_transcript`,
-`set_verdict`, `control`.
+Outils exposés : `get_state`, `get_backlog`, `get_directions`,
+`add_direction`, `set_direction_state`, `get_transcript`, `set_verdict`,
+`control`.
+
+`python mcp/server.py`, pas `python -m mcp.server` : ce dossier porte le même
+nom que le SDK, et `-m` lancerait le SDK.
 
 ## L'invariant qui compte
 
