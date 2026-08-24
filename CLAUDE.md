@@ -105,6 +105,11 @@ modèles d'API Kubernetes réels.
 - Prose et commentaires en français, identifiants en anglais.
 - États du backlog alignés sur A2A : `submitted`, `working`, `input_required`,
   `completed`, `failed`, `canceled`.
+- **Le coupe-circuit est dans le bandeau, pas dans un panneau.** Suspendre
+  est un garde-fou de dépense : il doit être atteignable en un tap et agir
+  avant la prochaine dépense — pas au tour suivant. `_attendre_reprise()` est
+  appelé avant chaque appel de modèle et avant chaque sandbox du soak. Si tu
+  ajoutes une dépense ailleurs dans la boucle, ajoute l'appel avec.
 - Deux gates humains, deux statuts distincts : `awaiting_gate` demande
   l'autorisation d'évaluer un patch que le garde-fou a jugé sensible,
   `awaiting_human` demande l'intégration d'un patch déjà mesuré. « Oui » n'y
@@ -125,7 +130,7 @@ modèles d'API Kubernetes réels.
 | Trancher une direction | `POST /directions/{id}/verdict` | `set_direction_state` | panneau › directions (boutons) |
 | Fil de discussion | `GET /transcript`, `GET /stream` | `get_transcript` | fil principal |
 | Verdict humain | `POST /verdict/{id}` | `set_verdict` | barre de décision |
-| Pause / reprise / arrêt | `POST /control` | `control` | panneau › contrôle |
+| Pause / reprise / arrêt | `POST /control` | `control` | bandeau (coupe-circuit) + panneau › contrôle |
 | Annuler une génération | `POST /control` (`rollback`) | `control` | panneau › contrôle |
 
 Une ligne incomplète est une dette, pas une étape. `tests/test_parite.py`

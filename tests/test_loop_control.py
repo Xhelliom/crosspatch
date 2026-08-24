@@ -188,3 +188,79 @@ def test_un_arret_demande_est_respecte(loop):
     lo.archive.set_control("stop", "1")
     lo.run()                      # ne doit pas boucler
     assert any("Arrêt demandé" in e["body"] for e in lo.archive.transcript())
+
+
+# --- le coupe-circuit agit avant chaque dépense, pas au tour suivant -------
+
+def test_attendre_reprise_bloque_puis_repart(loop, monkeypatch):
+    lo, L, _ = loop
+    lo.archive.set_control("paused", "1")
+    dodos = []
+
+    def faux_sleep(_):
+        dodos.append(1)
+        if len(dodos) == 2:
+            lo.archive.set_control("paused", "0")   # l'humain reprend
+
+    monkeypatch.setattr(L.time, "sleep", faux_sleep)
+    assert lo._attendre_reprise() is True
+    assert len(dodos) == 2
+
+
+def test_attendre_reprise_rend_la_main_sur_arret(loop, monkeypatch):
+    lo, L, _ = loop
+    lo.archive.set_control("paused", "1")
+    monkeypatch.setattr(L.time, "sleep",
+                        lambda _: lo.archive.set_control("stop", "1"))
+    assert lo._attendre_reprise() is False
+
+
+def test_attendre_reprise_ne_bloque_pas_au_repos(loop):
+    lo, _, _ = loop
+    assert lo._attendre_reprise() is True
+
+
+def test_l_ideation_ne_depense_rien_en_pause(loop, monkeypatch):
+    """La pause doit couper avant l'appel de modèle, pas après."""
+    lo, L, _ = loop
+    appels = []
+    monkeypatch.setattr(lo.llm, "chat_json",
+                        lambda *a, **k: appels.append(1) or {})
+    monkeypatch.setattr(lo, "_attendre_reprise", lambda: False)
+    lo._ideate("A", "B")
+    assert appels == []
+
+
+def test_la_proposition_ne_depense_rien_en_pause(loop, monkeypatch):
+    lo, _, _ = loop
+    appels = []
+    monkeypatch.setattr(lo.llm, "chat_json",
+                        lambda *a, **k: appels.append(1) or {})
+    monkeypatch.setattr(lo, "_attendre_reprise", lambda: False)
+    lo._turn("A", "B")
+    assert appels == []
+
+
+def test_un_soak_interrompu_n_est_pas_archive_comme_resultat(loop, monkeypatch):
+    """Un score partiel n'est pas comparable aux autres générations."""
+    lo, L, root = loop
+    gen_id = _gen(lo, status="running")
+    (root / "candidates").mkdir(exist_ok=True)
+    # Le sujet du test est l'interruption du soak, pas l'application du patch.
+    monkeypatch.setattr(L.bl, "apply_patch", lambda ws, diff: (True, ""))
+    monkeypatch.setattr(lo, "_attendre_reprise", lambda: True)
+    monkeypatch.setattr(type(lo.runner), "soak",
+                        lambda self, ws, h, n, gen_id=None, avant_chaque=None:
+                        [_Eval()])          # un seul run sur les trois demandés
+    lo._evaluate(gen_id, "B", "--- a/x\n+++ b/x\n")
+    row = lo.archive.get(gen_id)
+    assert row["status"] == "failed"
+    assert "interrompu" in row["note"]
+
+
+class _Eval:
+    pass_rate = 1.0
+    tokens_per_task = 0.0
+    wall_time_p50 = 0.0
+    failures: list = []
+    crashed = False

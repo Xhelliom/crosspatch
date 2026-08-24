@@ -39,7 +39,8 @@ header{
   font-family:var(--display);font-weight:800;font-size:19px;
   letter-spacing:-.02em;
 }
-.brand .run{font-size:11px;color:var(--mute)}
+.brand .run{font-size:11px;color:var(--mute);white-space:nowrap;
+  overflow:hidden;text-overflow:ellipsis}
 
 /* chaque génération = une encoche. hauteur = pass_rate, couleur = proposeur */
 .rail{
@@ -108,6 +109,31 @@ button.go:hover{background:rgba(88,191,166,.1)}
 .empty b{display:block;color:var(--bone);font-family:var(--display);
   font-weight:500;font-size:15px;margin-bottom:6px}
 
+/* ---- coupe-circuit ---- */
+/* L'identité sur deux lignes : à 390 px, le titre, l'identifiant de run et
+   les deux boutons ne tiennent pas côte à côte, et c'est le bouton qui
+   sortait de l'écran. */
+.ident{display:flex;flex-direction:column;gap:1px;min-width:0}
+.headacts{display:flex;align-items:center;gap:8px;flex:none}
+.halt{
+  font-size:10px;letter-spacing:.06em;text-transform:uppercase;font-weight:700;
+  border:1px solid var(--alarm);color:var(--alarm);border-radius:8px;
+  padding:6px 10px;line-height:1;background:transparent;white-space:nowrap;
+}
+.halt:hover{background:rgba(217,120,140,.12)}
+/* En pause, le bouton devient l'action de reprise : couleur d'accord, pas
+   d'alarme — l'état dangereux est « ça tourne », pas « c'est arrêté ». */
+.halt[aria-pressed="true"]{border-color:var(--b);color:var(--b)}
+.halt[aria-pressed="true"]:hover{background:rgba(88,191,166,.12)}
+.halt[disabled]{opacity:.45;pointer-events:none}
+
+.paused-note{
+  border:1px solid var(--alarm);border-radius:9px;
+  color:var(--alarm);font-size:11px;line-height:1.4;
+  padding:8px 10px;margin-bottom:10px;
+}
+body.paused .rail{opacity:.4}
+
 /* ---- panneau : backlog, directions, contrôle ---- */
 .iconbtn{
   border:1px solid var(--edge);border-radius:8px;background:transparent;
@@ -170,12 +196,21 @@ form.newdir textarea{min-height:64px}
 
 <header>
   <div class="brand">
-    <h1>crosspatch</h1>
-    <div style="display:flex;align-items:center;gap:10px">
+    <div class="ident">
+      <h1>crosspatch</h1>
       <div class="run" id="run">—</div>
+    </div>
+    <div class="headacts">
+      <!-- Le coupe-circuit. Toujours visible, un seul tap : quand la dépense
+           part, on ne veut pas ouvrir un panneau et choisir un onglet. -->
+      <button id="halt" class="halt" aria-pressed="false"
+              title="Suspendre les agents">suspendre</button>
       <button class="iconbtn" id="open" aria-expanded="false"
               aria-controls="sheet">panneau</button>
     </div>
+  </div>
+  <div class="paused-note" id="pausednote" hidden>
+    En pause — aucun appel de modèle, aucun sandbox. La dépense est gelée.
   </div>
   <div class="rail" id="rail"></div>
   <div class="readout">
@@ -280,6 +315,7 @@ async function poll() {
     $("#spendbox").classList.toggle("hot", s.spent_usd > s.max_usd * 0.8);
     drawRail(s.recent);
     setGate(s.awaiting_human[0] || null);
+    setHalt(s.paused, s.stopped);
     drawControl(s);
   } catch (e) { /* le worker peut être à l'arrêt : on réessaie */ }
 }
@@ -299,6 +335,41 @@ function drawRail(recent) {
   });
   rail.scrollLeft = rail.scrollWidth;
 }
+
+/* ---- coupe-circuit ----
+   Le garde-fou de dépense. Il n'appelle rien de neuf : `/control` et l'outil
+   MCP `control` existent déjà, la parité tient. Ce qui change est qu'il est
+   atteignable en un tap au lieu de deux, parce qu'un coupe-circuit enterré
+   dans un panneau n'en est pas un. */
+const halt = $("#halt");
+let enPause = false, arrete = false;
+
+function setHalt(paused, stopped) {
+  enPause = !!paused;
+  arrete = !!stopped;
+  halt.setAttribute("aria-pressed", String(enPause));
+  halt.textContent = arrete ? "arrêté" : enPause ? "reprendre" : "suspendre";
+  halt.title = arrete ? "Run arrêté — le worker a rendu la main"
+    : enPause ? "Reprendre les tours" : "Suspendre les agents";
+  halt.disabled = arrete;
+  document.body.classList.toggle("paused", enPause && !arrete);
+  $("#pausednote").hidden = !enPause || arrete;
+}
+
+halt.onclick = async () => {
+  const cible = enPause ? "resume" : "pause";
+  // Retour immédiat : sur un coupe-circuit, attendre le prochain sondage
+  // (4 s) donne l'impression que le clic n'a pas pris.
+  setHalt(cible === "pause", arrete);
+  halt.disabled = true;
+  try {
+    await post("/control", { action: cible });
+  } catch (e) {
+    setHalt(cible !== "pause", arrete);   // l'appel a échoué : on rétablit
+  }
+  halt.disabled = arrete;
+  poll();
+};
 
 /* ---- barre de décision ----
    `stage` dit ce que « oui » veut dire : autoriser l'évaluation d'un patch
@@ -456,6 +527,12 @@ function drawControl(s) {
 }
 
 $$(".ctlgrid button[data-act]").forEach(b => b.onclick = async () => {
+  // `stop` est irréversible côté worker : on demande confirmation, ce que le
+  // coupe-circuit de l'en-tête n'a pas besoin de faire puisqu'il est annulable.
+  if (b.dataset.act === "stop" &&
+      !confirm("Arrêter le run ? Le worker rend la main, seul un redémarrage le relance.")) {
+    return;
+  }
   await post("/control", { action: b.dataset.act });
   poll();
 });

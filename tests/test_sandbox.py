@@ -219,3 +219,31 @@ def test_le_tar_exclut_git_et_pycache(tmp_path):
     names = tarfile.open(fileobj=io.BytesIO(sx._tar(src))).getnames()
     assert "./agent.py" in names
     assert not any("__pycache__" in n or ".git" in n for n in names)
+
+
+# --- garde-fou de dépense : le soak doit pouvoir être interrompu -----------
+
+def test_le_soak_demande_l_autorisation_avant_chaque_sandbox(env, tmp_path, monkeypatch):
+    monkeypatch.setattr(sx, "E2BSandbox", _Sandbox.make(json.dumps(PAYLOAD)))
+    appels = []
+    r = sx.Runner(_Archive())
+    runs = r.soak(*_dirs(tmp_path), n=3,
+                  avant_chaque=lambda: appels.append(1) or True)
+    assert len(appels) == 3 and len(runs) == 3
+
+
+def test_le_soak_s_arrete_quand_on_le_lui_demande(env, tmp_path, monkeypatch):
+    """Suspendre pendant un soak ne doit pas laisser brûler les microVM
+    restantes : c'est là que passe l'essentiel de la dépense d'un tour."""
+    monkeypatch.setattr(sx, "E2BSandbox", _Sandbox.make(json.dumps(PAYLOAD)))
+    reponses = iter([True, False, True])
+    arch = _Archive()
+    runs = sx.Runner(arch, usd_per_hour=3600.0).soak(
+        *_dirs(tmp_path), n=3, avant_chaque=lambda: next(reponses))
+    assert len(runs) == 1                      # le second n'a pas démarré
+    assert len(arch.charges) == 1              # et n'a rien coûté
+
+
+def test_soak_sans_garde_fou_reste_compatible(env, tmp_path, monkeypatch):
+    monkeypatch.setattr(sx, "E2BSandbox", _Sandbox.make(json.dumps(PAYLOAD)))
+    assert len(sx.Runner(_Archive()).soak(*_dirs(tmp_path), n=2)) == 2

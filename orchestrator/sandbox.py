@@ -138,9 +138,21 @@ class Runner:
                                       self.usd_per_hour))
 
     def soak(self, workspace: Path, harness: Path, n: int = 3,
-             gen_id: int | None = None) -> list[EvalResult]:
-        """N runs avec seeds différents. Un bon score une fois, c'est du bruit."""
-        return [self.evaluate(workspace, harness, gen_id) for _ in range(n)]
+             gen_id: int | None = None,
+             avant_chaque=None) -> list[EvalResult]:
+        """N runs avec seeds différents. Un bon score une fois, c'est du bruit.
+
+        `avant_chaque` est appelé avant chaque démarrage de sandbox et peut
+        renvoyer False pour interrompre : c'est le point où la boucle place
+        son garde-fou de dépense. Sans lui, « suspendre » laisserait le soak
+        en cours consommer ses N microVM.
+        """
+        runs = []
+        for _ in range(n):
+            if avant_chaque is not None and not avant_chaque():
+                break
+            runs.append(self.evaluate(workspace, harness, gen_id))
+        return runs
 
 
 def _tar(src: Path) -> bytes:

@@ -84,6 +84,19 @@ class Loop:
     def stop(self) -> bool:
         return self.archive.flag("stop")
 
+    def _attendre_reprise(self) -> bool:
+        """Bloque tant que l'humain a suspendu. False si l'arrêt est demandé.
+
+        Appelé **avant chaque dépense** — un appel de modèle, un sandbox — et
+        pas seulement en tête de boucle. Sans ça, « suspendre » n'agit qu'au
+        tour suivant : le soak en cours brûlerait ses trois microVM et le tour
+        ses appels de modèle. Un coupe-circuit qui laisse finir la dépense en
+        cours n'en est pas un.
+        """
+        while self.paused and not self.stop:
+            time.sleep(IDLE)
+        return not self.stop
+
     def _drain_control(self) -> None:
         """Consomme les intentions déposées par l'API depuis l'autre conteneur."""
         for key, verdict in self.archive.pending("verdict:"):
@@ -188,6 +201,8 @@ class Loop:
                 for r in self.archive.failures(self.run_id)
             ],
         }
+        if not self._attendre_reprise():
+            return
         out = self.llm.chat_json([
             {"role": "system", "content": (PROMPTS / "ideator.md").read_text()},
             {"role": "user", "content": bl.render(ctx)},
@@ -237,6 +252,8 @@ class Loop:
             "best": dict(self.archive.best(self.run_id) or {}),
         }
 
+        if not self._attendre_reprise():
+            return
         proposal = self.llm.chat_json([
             {"role": "system", "content": (PROMPTS / "proposer.md").read_text()},
             {"role": "user", "content": bl.render(ctx)},
@@ -291,7 +308,16 @@ class Loop:
             return
 
         runs = self.runner.soak(cand, ROOT / "harness",
-                                n=self.cfg["soak_runs"], gen_id=gen_id)
+                                n=self.cfg["soak_runs"], gen_id=gen_id,
+                                avant_chaque=self._attendre_reprise)
+        if len(runs) < self.cfg["soak_runs"]:
+            # Interrompu par un arrêt : le score partiel n'est pas comparable
+            # aux autres générations, on ne l'archive pas comme un résultat.
+            self.archive.update(gen_id, status="failed",
+                                note="soak interrompu — arrêt demandé")
+            self.archive.say(gen_id, "system", "message",
+                             "Évaluation interrompue avant la fin du soak.")
+            return
         self.last_failures = runs[0].failures if runs else []
         if any(r.crashed for r in runs):
             self.archive.update(gen_id, status="failed", note="crash du harness")
