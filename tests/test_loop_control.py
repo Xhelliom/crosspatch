@@ -345,3 +345,28 @@ def test_une_poussee_ratee_ne_degrade_pas_un_patch_accepte(loop, monkeypatch):
     assert adoptes == [(gen, "B")]          # adopté malgré l'échec de poussée
     fil = [e["body"] for e in lo.archive.transcript()]
     assert any("poussée à refaire" in b for b in fil)
+
+
+def test_un_nouveau_run_repart_de_workspaces_neufs(loop, monkeypatch):
+    """Le volume survit au redémarrage — voulu en cours de run. Mais sans
+    remise à neuf au changement de `run_id`, le run suivant mesurait le code
+    du précédent avec le harness du nouveau."""
+    lo, L, root = loop
+    (lo.ws["A"] / "orchestrator" / "agent.py").write_text("patché par B\n")
+
+    lo.cfg["run_id"] = lo.run_id = "un-autre-run"
+    lo._seed_workspaces()
+
+    neuf = (root / "orchestrator" / "agent.py").read_text()
+    assert (lo.ws["A"] / "orchestrator" / "agent.py").read_text() == neuf
+
+
+def test_un_meme_run_garde_ses_workspaces(loop):
+    """Redémarrer le worker en cours de run ne doit pas remettre A et B à la
+    graine : c'est l'état de l'expérience."""
+    lo, _, _ = loop
+    (lo.ws["A"] / "orchestrator" / "agent.py").write_text("patché par B\n")
+
+    lo._seed_workspaces()
+
+    assert (lo.ws["A"] / "orchestrator" / "agent.py").read_text() == "patché par B\n"

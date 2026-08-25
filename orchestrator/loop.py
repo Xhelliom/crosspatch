@@ -65,6 +65,22 @@ class Loop:
         self.last_failures: list[dict] = []
         # A et B partent identiques : c'est la prémisse de l'expérience.
         self.ws = {r: ROOT / "workspaces" / r for r in ("A", "B")}
+        self._seed_workspaces()
+
+    def _seed_workspaces(self) -> None:
+        """Identiques, et neufs à chaque run.
+
+        Le volume des workspaces survit au redémarrage du worker, ce qui est
+        voulu : les perdre en cours de run remettrait les deux agents à la
+        graine. Mais rien ne les rafraîchissait au changement de `run_id`, et
+        un nouveau run repartait donc du code laissé par le précédent — tout
+        en le mesurant avec le harness du nouveau. Deux runs n'étaient pas
+        comparables alors que le `run_id` est là pour ça.
+        """
+        if self.archive.get_control("workspaces_run") != self.run_id:
+            for p in self.ws.values():
+                shutil.rmtree(p, ignore_errors=True)
+            self.archive.set_control("workspaces_run", self.run_id)
         for p in self.ws.values():
             self._seed_workspace(p)
 
