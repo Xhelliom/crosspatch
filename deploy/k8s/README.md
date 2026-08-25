@@ -102,10 +102,10 @@ Le Service est en `ClusterIP` — rien n'est exposé par défaut. Au choix :
 
 ```bash
 # le plus simple, depuis la machine qui porte le cluster
-kubectl -n crosspatch port-forward --address 0.0.0.0 svc/api 8080:8080
+kubectl -n crosspatch port-forward --address 0.0.0.0 svc/api 8480:8080
 ```
 
-Puis `http://<ip-de-la-machine>:8080` depuis le téléphone. Pour quelque chose
+Puis `http://<ip-de-la-machine>:8480` depuis le téléphone. Pour quelque chose
 de durable, un Ingress ou Tailscale — mais garde en tête que le
 `CONTROL_TOKEN` est la seule chose qui protège l'API : ne l'expose pas sur
 Internet sans autre couche devant.
@@ -115,7 +115,7 @@ Internet sans autre couche devant.
 ```json
 { "mcpServers": { "crosspatch": {
     "command": "python", "args": ["mcp/server.py"],
-    "env": { "CROSSPATCH_API": "http://<ip>:8080", "CONTROL_TOKEN": "…" }
+    "env": { "CROSSPATCH_API": "http://<ip>:8480", "CONTROL_TOKEN": "…" }
 }}}
 ```
 

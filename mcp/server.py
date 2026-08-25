@@ -19,7 +19,7 @@ import os
 import httpx
 from mcp.server import MCPServer
 
-API = os.environ.get("CROSSPATCH_API", "http://localhost:8080")
+API = os.environ.get("CROSSPATCH_API", "http://localhost:8480")
 TOKEN = os.environ["CONTROL_TOKEN"]
 # Nommé `server` et pas `mcp` : le module `mcp` du SDK est déjà importé.
 server = MCPServer("crosspatch")

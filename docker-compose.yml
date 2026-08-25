@@ -9,6 +9,11 @@ services:
       POSTGRES_DB: crosspatch
       POSTGRES_USER: crosspatch
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-crosspatch-local}
+      # Postgres 18 range ses données par version majeure et ignorerait un
+      # mount sur .../data sans PGDATA explicite. Même valeur que
+      # `deploy/k8s/postgres.yaml` : la divergence local/cluster est
+      # exactement ce qu'on ne veut pas.
+      PGDATA: /var/lib/postgresql/data/pgdata
     volumes: ["./data/pg:/var/lib/postgresql/data"]
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U crosspatch -d crosspatch"]
@@ -18,7 +23,7 @@ services:
 
   api:
     build: .
-    ports: ["8080:8080"]
+    ports: ["${CROSSPATCH_PORT:-8480}:8080"]
     env_file: .env
     environment:
       CROSSPATCH_ARCHIVE: postgresql://crosspatch:${POSTGRES_PASSWORD:-crosspatch-local}@db:5432/crosspatch
@@ -31,9 +36,16 @@ services:
     env_file: .env
     environment:
       CROSSPATCH_ARCHIVE: postgresql://crosspatch:${POSTGRES_PASSWORD:-crosspatch-local}@db:5432/crosspatch
+    # Volumes nommés, pas des bind mounts : l'image tourne en uid 10001 et
+    # un bind créé par Docker appartient à root. C'est aussi l'équivalent
+    # local du PVC `worker-state` — un bind vers le dépôt en divergerait.
     volumes:
-      - ./workspaces:/app/workspaces
-      - ./candidates:/app/candidates
+      - workspaces:/app/workspaces
+      - candidates:/app/candidates
     depends_on:
       db: { condition: service_healthy }
       api: { condition: service_started }
+
+volumes:
+  workspaces:
+  candidates:

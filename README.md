@@ -56,7 +56,7 @@ pytest -q                   # 73 tests, aucun n'appelle d'API externe
 et vérifie qu'il sort `pass_rate: 1.0`. Si celui-là échoue, aucune mesure de
 génération n'a de sens et il est inutile de débugger le reste.
 
-UI sur http://localhost:8080 — le fil de discussion et les boutons de validation.
+UI sur http://localhost:8480 (`CROSSPATCH_PORT` pour en changer) — le fil de discussion et les boutons de validation.
 
 ## Kubernetes
 
