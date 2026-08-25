@@ -12,6 +12,7 @@ Contrat attendu par le harness :
 """
 from __future__ import annotations
 
+import json
 import os
 import re
 from pathlib import Path
@@ -23,11 +24,16 @@ SYSTEM = "Tu écris du Python. Réponds avec un seul bloc de code, rien d'autre.
 
 
 def solve(prompt: str, workdir: Path) -> None:
-    code = _complete(f"{prompt}\n\nÉcris le module Python complet.")
+    code, usage = _complete(f"{prompt}\n\nÉcris le module Python complet.")
     (workdir / "solution.py").write_text(_extract(code))
+    # Le harness ne voit pas les appels réseau de l'agent : sans ce report,
+    # `tokens_per_task` restait à 0.0 et les agents proposaient d'optimiser
+    # un chiffre qui n'avait jamais été mesuré. C'est de l'instrumentation,
+    # pas une aide à résoudre — garde-la si tu réécris ce fichier.
+    (workdir / "usage.json").write_text(json.dumps(usage))
 
 
-def _complete(user: str) -> str:
+def _complete(user: str) -> tuple[str, dict]:
     r = httpx.post(
         "https://openrouter.ai/api/v1/chat/completions",
         headers={"Authorization": f"Bearer {os.environ['OPENROUTER_API_KEY']}"},
@@ -42,7 +48,8 @@ def _complete(user: str) -> str:
         timeout=120,
     )
     r.raise_for_status()
-    return r.json()["choices"][0]["message"]["content"]
+    data = r.json()
+    return data["choices"][0]["message"]["content"], data.get("usage") or {}
 
 
 def _extract(text: str) -> str:
