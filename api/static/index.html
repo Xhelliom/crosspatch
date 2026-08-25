@@ -20,7 +20,9 @@
 body{
   background:var(--ground);color:var(--bone);font-family:var(--mono);
   font-size:14px;line-height:1.5;
-  padding-bottom:calc(96px + env(safe-area-inset-bottom));
+  /* Réservé pour la barre de décision, mesurée par JS : son texte passe
+     sur deux lignes en mobile et un padding en dur rognait le fil. */
+  padding-bottom:var(--gate-h, calc(96px + env(safe-area-inset-bottom)));
   -webkit-font-smoothing:antialiased;
 }
 :focus-visible{outline:2px solid var(--bone);outline-offset:2px}
@@ -84,6 +86,24 @@ main{padding:16px 16px 0;display:flex;flex-direction:column;gap:14px}
 }
 .verdictline b{color:var(--bone);font-weight:500}
 .verdictline.up b{color:var(--b)} .verdictline.down b{color:var(--alarm)}
+
+/* ---- un tour = un bloc repliable ----
+   Le fil était une suite plate : idéation, proposition, score et verdict se
+   suivaient sans que rien ne dise où un tour commence ni qui patche qui. */
+.tour{border:1px solid var(--edge);border-radius:12px;overflow:hidden}
+.tour>summary{
+  cursor:pointer;list-style:none;padding:9px 12px;background:var(--raised);
+  font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--mute);
+  display:flex;align-items:center;gap:8px;
+}
+.tour>summary::-webkit-details-marker{display:none}
+.tour>summary::before{content:"▸";font-size:9px;transition:transform .15s}
+.tour[open]>summary::before{transform:rotate(90deg)}
+.tour>summary b{color:var(--bone);font-weight:500;letter-spacing:.04em;
+  text-transform:none;font-size:12px}
+.tour .issue{margin-left:auto;font-size:10px}
+.tour .issue.up{color:var(--b)} .tour .issue.down{color:var(--alarm)}
+.corps{padding:12px;display:flex;flex-direction:column;gap:12px}
 
 /* ---- barre de décision, uniquement quand ça attend ---- */
 .gate{
@@ -214,9 +234,12 @@ form.newdir textarea{min-height:64px}
   </div>
   <div class="rail" id="rail"></div>
   <div class="readout">
-    <div><span>réussite</span><b id="score">—</b></div>
-    <div><span>génération</span><b id="gen">—</b></div>
+    <!-- « réussite » seule ne disait rien : 0.667 est-il un gain ou le
+         niveau de départ ? On montre les deux, et l'écart. -->
+    <div><span>réussite / réf.</span><b id="score">—</b></div>
+    <div><span>pipeline</span><b id="pipe">—</b></div>
     <div><span>acceptation</span><b id="accept">—</b></div>
+    <div><span>convergence</span><b id="conv">—</b></div>
     <div class="spend" id="spendbox"><span>dépensé</span><b id="spend">—</b></div>
   </div>
 </header>
@@ -308,8 +331,25 @@ async function poll() {
   try {
     const s = last = await get("/state");
     $("#run").textContent = s.run_id;
-    $("#score").textContent = s.best?.scores ? (JSON.parse(s.best.scores).pass_rate).toFixed(2) : "—";
-    $("#gen").textContent = s.recent.length ? "#" + s.recent[0].id : "—";
+    const r = s.reussite || {};
+    const n2 = v => v === null || v === undefined ? "—" : v.toFixed(2);
+    $("#score").textContent = `${n2(r.courant)} / ${n2(r.reference)}`
+      + (r.delta ? ` (${r.delta > 0 ? "+" : ""}${r.delta.toFixed(2)})` : "");
+    $("#score").classList.toggle("up", r.delta > 0);
+    $("#score").classList.toggle("down", r.delta < 0);
+    // Où meurent les propositions : un `acceptation 0 %` ne dit pas si les
+    // idées sont mauvaises ou si aucun patch n'atteint le harness.
+    const p = s.pipeline || {};
+    const perdues = (p.inapplicables || 0) + (p.harness_casse || 0);
+    $("#pipe").textContent = p.proposees
+      ? `${p.acceptees}✓ ${p.regressions}↓ ${perdues}✗ / ${p.proposees}`
+      : "—";
+    $("#pipe").title = `${p.acceptees} acceptées · ${p.regressions} régressions · `
+      + `${p.inapplicables} inapplicables · ${p.harness_casse} harness cassé · `
+      + `${p.refusees} refusées · ${p.en_attente} en attente`;
+    const c = s.convergence || {};
+    $("#conv").textContent = c.dup_streak ? `${c.dup_streak}/3 tours` : "—";
+    $("#conv").title = `doublons ${pct(c.dup_ratio)} · seuil ${pct(c.seuil)}`;
     $("#accept").textContent = pct(s.acceptance_rate?.overall);
     $("#spend").textContent = "$" + s.spent_usd.toFixed(2);
     $("#spendbox").classList.toggle("hot", s.spent_usd > s.max_usd * 0.8);
@@ -373,7 +413,12 @@ halt.onclick = async () => {
 
 /* ---- barre de décision ----
    `stage` dit ce que « oui » veut dire : autoriser l'évaluation d'un patch
-   que le garde-fou a jugé sensible, ou intégrer un patch déjà mesuré. */
+   que le garde-fou a jugé sensible, ou intégrer un patch déjà mesuré.
+   Elle est `fixed` : sa hauteur varie avec le texte, on la reporte en
+   padding sur le fil plutôt que de la deviner. */
+new ResizeObserver(([e]) => document.body.style.setProperty(
+  "--gate-h", e.target.offsetHeight + "px")).observe($("#gate"));
+
 function setGate(g) {
   pending = g;
   $("#gate").classList.toggle("open", !!g && !$("#sheet").classList.contains("open"));
@@ -537,9 +582,42 @@ $$(".ctlgrid button[data-act]").forEach(b => b.onclick = async () => {
   poll();
 });
 
-/* ---- fil ---- */
+/* ---- fil ----
+   `kind: "turn"` est un marqueur posé par la boucle en début de tour. Tout
+   ce qui suit lui appartient, jusqu'au marqueur suivant : c'est ce qui
+   permet de replier un tour entier sans rien changer au schéma. */
+let corps = null, tourEnCours = null;
+
+function ouvrirTour(e) {
+  if (tourEnCours) tourEnCours.open = false;   // seul le dernier reste ouvert
+  const d = el("details", "tour");
+  d.open = true;
+  const s = el("summary");
+  s.appendChild(el("b", null, e.body));
+  s.appendChild(el("span", "issue"));
+  d.appendChild(s);
+  corps = el("div", "corps");
+  d.appendChild(corps);
+  $("#thread").appendChild(d);
+  tourEnCours = d;
+}
+
+function issue(e) {
+  if (!tourEnCours) return;
+  const n = tourEnCours.querySelector(".issue");
+  if (e.kind === "error") { n.textContent = "✗"; n.className = "issue down"; }
+  else if (e.kind === "score") {
+    const baisse = /(\d\.\d+) → (\d\.\d+)/.exec(e.body);
+    const up = baisse && +baisse[2] >= +baisse[1];
+    n.textContent = up ? "✓" : "↓";
+    n.className = "issue " + (up ? "up" : "down");
+  }
+}
+
 function line(e) {
   if (!seeded) { $("#thread").innerHTML = ""; seeded = true; }
+  if (e.kind === "turn") { ouvrirTour(e); return; }
+  issue(e);
   const n = el("div");
   if (e.actor === "A" || e.actor === "B") {
     n.className = "turn " + e.actor;
@@ -550,7 +628,7 @@ function line(e) {
     n.className = "verdictline " + (e.kind === "error" ? "down" : up ? "up" : "");
     n.appendChild(el("b", null, e.body));
   }
-  $("#thread").appendChild(n);
+  (corps || $("#thread")).appendChild(n);
   window.scrollTo({ top: document.body.scrollHeight, behavior: "smooth" });
 }
 

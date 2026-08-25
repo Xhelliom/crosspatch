@@ -115,3 +115,17 @@ def test_rollback_est_mis_en_file(api):
                     headers=H)
     assert r.status_code == 200
     assert archive.pending("rollback:") == [(f"rollback:{gen_id}", "1")]
+
+
+def test_reprendre_leve_aussi_l_arret(api):
+    """`stop` n'est pas lié au run : tant qu'il traîne, le worker ressort à
+    la première itération, même redémarré, même sur un nouveau run_id. Le
+    bouton « reprendre » est ce qui relance après un CONVERGED."""
+    client, archive = api
+    client.post("/control", json={"action": "stop"}, headers=H)
+    assert archive.flag("stop") is True
+
+    client.post("/control", json={"action": "resume"}, headers=H)
+
+    assert archive.flag("stop") is False
+    assert client.get("/state", headers=H).json()["stopped"] is False

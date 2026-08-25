@@ -42,7 +42,16 @@ def auth(authorization: str = Header("")) -> None:
 @app.get("/state", dependencies=[Depends(auth)])
 def state() -> dict:
     best = archive.best(cfg["run_id"])
+    ref = archive.reference(cfg["run_id"])
     recent = archive.recent(cfg["run_id"], 10)
+
+    def taux(row):
+        return json.loads(row["scores"]).get("pass_rate") if row and row["scores"] else None
+
+    reference = taux(ref)
+    # `best()` peut renvoyer la référence : c'est son rôle de plancher pour
+    # les deltas, mais l'afficher comme un record ferait croire à un gain.
+    courant = taux(best) if best and best["role_proposer"] != "baseline" else None
     return {
         "run_id": cfg["run_id"],
         "model": cfg["model"],
@@ -51,6 +60,17 @@ def state() -> dict:
         "spent_usd": round(archive.spent(), 4),
         "max_usd": cfg["max_usd"],
         "best": dict(best) if best else None,
+        "reussite": {"reference": reference, "courant": courant,
+                     "delta": (None if courant is None or reference is None
+                               else round(courant - reference, 4))},
+        "pipeline": archive.pipeline(cfg["run_id"]),
+        "convergence": {
+            # Le worker vit dans un autre conteneur : il dépose sa mesure de
+            # convergence dans `control`, seul canal partagé.
+            "dup_streak": int(archive.get_control("dup_streak", "0") or 0),
+            "dup_ratio": float(archive.get_control("dup_ratio") or 0.0),
+            "seuil": cfg["dup_ratio_stop"],
+        },
         "acceptance_rate": archive.acceptance_rate(cfg["run_id"]),
         "awaiting_human": [
             # `stage` dit ce que « oui » veut dire ici : autoriser
@@ -140,6 +160,11 @@ def control(body: dict) -> dict:
         archive.set_control("paused", "1")
     elif action == "resume":
         archive.set_control("paused", "0")
+        # `stop` n'est pas lié au run : tant qu'il traîne en base, le worker
+        # ressort à la première itération, y compris après un redémarrage et
+        # y compris sur un nouveau run_id. Un « reprendre » qui ne reprend
+        # pas est un piège — c'est le bouton qui relance après CONVERGED.
+        archive.set_control("stop", "0")
     elif action == "stop":
         archive.set_control("stop", "1")
     elif action == "rollback":
