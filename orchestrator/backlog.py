@@ -1,6 +1,7 @@
 """Backlog géré par l'IA, arbitré par l'humain. États alignés sur A2A."""
 from __future__ import annotations
 
+import difflib
 import json
 import os
 import re
@@ -113,14 +114,49 @@ def brief(item: dict) -> dict:
             ("id", "title", "hypothesis", "expected_gain", "confidence", "goal")}
 
 
-def tree(ws: Path) -> str:
-    return "\n".join(
-        sorted(p.relative_to(ws).as_posix()
-               for p in ws.rglob("*.py") if "__pycache__" not in p.parts))
+def sources(ws: Path) -> dict[str, str]:
+    """Le contenu des fichiers de la zone modifiable, pas leurs noms.
+
+    Ça n'a l'air que d'un détail de contexte, c'en est un de correction : on
+    demande au proposeur un diff unifié, donc des lignes de contexte exactes.
+    Tant qu'il ne recevait que l'arborescence, il inventait le code cible et
+    `git apply` refusait chaque patch — pas parce que le modèle est moyen,
+    mais parce que la tâche était impossible.
+    """
+    return {p.relative_to(ws).as_posix(): p.read_text()
+            for p in sorted(ws.rglob("*.py")) if "__pycache__" not in p.parts}
 
 
 def render(ctx: dict) -> str:
     return json.dumps(ctx, ensure_ascii=False, indent=2, default=str)
+
+
+def diff_de(ws: Path, rel: str, apres: str) -> str:
+    """Diff unifié entre le fichier tel qu'il est et la version réécrite.
+
+    Le proposeur renvoie le fichier entier, pas un diff : un modèle milieu
+    de gamme se trompe sur les compteurs de hunk *et* recopie le contexte à
+    95 %, ce qui suffit à faire refuser chaque `git apply`. Ce n'est pas ce
+    qu'on cherche à mesurer — on veut la qualité de l'idée, pas la fidélité
+    de la transcription. Le diff est donc calculé ici, où il est exact par
+    construction, et tout l'aval (garde-fou, archive, promotion) continue de
+    ne voir qu'un diff. Chaîne vide si le chemin sort du workspace ou si le
+    fichier réécrit est identique — dans les deux cas il n'y a rien à mesurer.
+    """
+    # `rel` sort du modèle : sans cette borne, un `../` suffirait à lire un
+    # fichier de l'hôte et à le recopier dans le diff, donc dans l'archive
+    # et dans l'UI. Le garde-fou ne passe qu'après, il est trop tard.
+    cible = (ws / rel).resolve()
+    if not cible.is_relative_to(ws.resolve()):
+        return ""
+    avant = cible.read_text() if cible.is_file() else ""
+    lignes = difflib.unified_diff(avant.splitlines(True), apres.splitlines(True),
+                                  f"a/{rel}", f"b/{rel}")
+    # Une ligne de diff sans fin de ligne est nécessairement la dernière d'un
+    # des deux côtés : `unified_diff` n'émet pas le marqueur que git attend
+    # là, et sans lui le patch décrit un fichier qui n'existe pas.
+    return "".join(l if l.endswith("\n") else l + "\n\\ No newline at end of file\n"
+                   for l in lignes)
 
 
 def apply_patch(workspace: Path, diff: str) -> tuple[bool, str]:
@@ -190,6 +226,21 @@ def _redact(text: str, token: str | None) -> str:
     return text.replace(token, "***") if token else text
 
 
+def _https(url: str) -> str:
+    """`git@host:chemin` ou `ssh://git@host/chemin` → `https://host/chemin`.
+
+    Le conteneur n'a pas de client ssh et n'aurait aucune clé à lui donner :
+    en Docker comme en cluster, la seule identité disponible est le PAT.
+    Pousser sur le remote tel quel donnait « cannot run ssh », au moment
+    précis où l'humain venait de dire oui.
+    """
+    url = url.removeprefix("ssh://")
+    if url.startswith("git@"):
+        host, _, chemin = url[4:].partition(":")
+        return f"https://{host}/{chemin}"
+    return url
+
+
 def _push(root: Path, branch: str) -> None:
     """Pousse HEAD sur `branch`, en gardant le jeton hors de portée.
 
@@ -200,13 +251,19 @@ def _push(root: Path, branch: str) -> None:
     """
     token = os.environ.get("GIT_PUSH_TOKEN")
     env = dict(os.environ)
+    cible = "origin"
     if token:
         askpass = root / ".git" / "crosspatch-askpass"
         askpass.write_text('#!/bin/sh\nprintf %s "$GIT_PUSH_TOKEN"\n')
         askpass.chmod(0o700)
         env.update(GIT_ASKPASS=str(askpass), GIT_TERMINAL_PROMPT="0")
+        # L'URL est calculée ici, pas écrite dans .git/config : `GIT_ASKPASS`
+        # ne sert qu'en HTTPS, et le remote du dépôt est souvent en ssh.
+        origine = subprocess.run(["git", "remote", "get-url", "origin"],
+                                 cwd=root, capture_output=True, text=True)
+        cible = _https(origine.stdout.strip()) or "origin"
 
-    p = subprocess.run(["git", "push", "origin", f"HEAD:refs/heads/{branch}"],
+    p = subprocess.run(["git", "push", cible, f"HEAD:refs/heads/{branch}"],
                        cwd=root, env=env, capture_output=True, text=True)
     if p.returncode:
         raise RuntimeError(f"git push : {_redact(p.stderr, token)[-500:]}")

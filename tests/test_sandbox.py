@@ -130,6 +130,9 @@ def test_le_bootstrap_installe_pytest_et_httpx(env, tmp_path, monkeypatch):
     setup = _Sandbox.last.commands.calls[0]
     assert "pip install -q pytest httpx" in setup
     assert "chmod -R a-w /harness" in setup      # harness monté en lecture seule
+    # Le template E2B tourne en `user` : sans sudo, /work n'est pas créable
+    # et chaque évaluation crashe avant d'avoir lancé une seule tâche.
+    assert "sudo mkdir -p /work /harness" in setup
 
 
 def test_bootstrap_vide_pour_un_template_dedie(env, tmp_path, monkeypatch):

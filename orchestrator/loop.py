@@ -40,6 +40,13 @@ IDLE = 2.0        # seconde(s) entre deux relectures du plan de contrôle
 MAX_ECHECS = 3    # tours ratés d'affilée avant de rendre la main
 
 
+def _moyenne(valeurs) -> float | None:
+    """None quand rien n'a été mesuré — surtout pas 0.0, qui se lit comme
+    « gratuit » et envoie les agents optimiser un chiffre inexistant."""
+    v = [x for x in valeurs if x is not None]
+    return sum(v) / len(v) if v else None
+
+
 class Loop:
     def __init__(self, cfg: dict):
         self.cfg = cfg
@@ -121,8 +128,49 @@ class Loop:
             finally:
                 self.archive.clear_control(key)
 
+    def _mesurer_reference(self) -> None:
+        """Score de l'agent non patché, avant le premier tour.
+
+        Sans elle, `before` vaut 0.0 tant qu'aucune génération n'a abouti, et
+        le premier patch qui passe s'attribue tout l'écart — y compris ce que
+        l'agent faisait déjà. Archivée sous `role_proposer='baseline'` : elle
+        sert de point de comparaison à `best()`, et `acceptance_rate`
+        l'ignore, parce que ce n'est la proposition de personne.
+        """
+        if self.archive.best(self.run_id) is not None:
+            return                      # déjà mesurée, ou run déjà avancé
+        if not self._attendre_reprise():
+            return                      # arrêt demandé : rien à archiver
+        gen_id = self.archive.add(Generation(
+            run_id=self.run_id, role_proposer="baseline", status="running",
+            note="mesure de référence — agent non patché"))
+        runs = self.runner.soak(self.ws["A"], ROOT / "harness",
+                                n=self.cfg["soak_runs"], gen_id=gen_id,
+                                avant_chaque=self._attendre_reprise)
+        if len(runs) < self.cfg["soak_runs"] or any(r.crashed for r in runs):
+            # Sans référence mesurable, les deltas resteraient faux : mieux
+            # vaut le dire que laisser la boucle produire des chiffres qui
+            # n'ont pas de sens.
+            self.archive.update(gen_id, status="failed",
+                                note="référence non mesurable")
+            self.archive.say(gen_id, "system", "error",
+                             "Référence non mesurable — les deltas seront "
+                             "comptés depuis 0.")
+            return
+        pass_rate = min(r.pass_rate for r in runs)   # le pire des N, comme ailleurs
+        self.archive.update(gen_id, status="completed", scores={
+            "pass_rate": pass_rate,
+            "tokens_per_task": _moyenne(r.tokens_per_task for r in runs),
+            "wall_time_p50": sum(r.wall_time_p50 for r in runs) / len(runs),
+            "delta": 0.0,
+        })
+        self.archive.say(gen_id, "referee", "score",
+                         f"référence : pass_rate {pass_rate:.3f} sur "
+                         f"{len(runs)} runs, avant tout patch")
+
     # ------------------------------------------------------------------ run
     def run(self) -> None:
+        self._mesurer_reference()
         turn = 0
         while True:
             self._drain_control()
@@ -153,6 +201,11 @@ class Loop:
 
             proposer = "A" if turn % 2 == 0 else "B"
             target = "B" if proposer == "A" else "A"
+            # Marqueur de tour : le fil est une suite plate d'événements, et
+            # rien n'y disait où commence un tour ni qui patche qui. L'UI
+            # groupe entre deux marqueurs — pas de colonne à ajouter.
+            self.archive.say(None, "system", "turn",
+                             f"tour {turn} — {proposer} patche {target}")
             try:
                 self._ideate(proposer, target)
                 self._turn(proposer, target)
@@ -237,6 +290,11 @@ class Loop:
                 self.archive.set_control("stop", "1")
         else:
             self.dup_streak = 0
+        # L'API et le worker sont deux conteneurs : la convergence n'existait
+        # que dans la mémoire du worker et comme ligne de texte dans le fil,
+        # alors que c'est le critère d'arrêt de l'expérience.
+        self.archive.set_control("dup_streak", str(self.dup_streak))
+        self.archive.set_control("dup_ratio", f"{dupes / total:.3f}" if total else "")
 
     # ----------------------------------------------------------------- tour
     def _turn(self, proposer: str, target: str) -> None:
@@ -246,7 +304,7 @@ class Loop:
 
         ctx = {
             "objective": self.objective,
-            "target_tree": bl.tree(self.ws[target]),
+            "target_files": bl.sources(self.ws[target]),
             "backlog": [bl.brief(i) for i in ranked[:8]],
             "past_failures": [dict(r) for r in self.archive.failures(self.run_id)],
             "best": dict(self.archive.best(self.run_id) or {}),
@@ -259,22 +317,27 @@ class Loop:
             {"role": "user", "content": bl.render(ctx)},
         ])
 
-        # `item_id: null` + "CONVERGED" est une réponse valide du proposeur.
-        if not proposal.get("diff"):
+        # `path: null` + "CONVERGED" est une réponse valide du proposeur.
+        path, content = proposal.get("path"), proposal.get("content")
+        diff = (bl.diff_de(self.ws[target], path, content)
+                if path and content is not None else "")
+        if not diff:
+            # Ni patch, ni changement : un fichier réécrit à l'identique est
+            # un tour sans proposition, pas une génération.
             self.archive.say(None, proposer, "message",
                              proposal.get("rationale", "aucun patch proposé"))
             return
 
         gen = Generation(
             run_id=self.run_id, role_proposer=proposer,
-            item_id=proposal.get("item_id"), diff=proposal["diff"],
+            item_id=proposal.get("item_id"), diff=diff,
             note=proposal.get("rationale", ""),
         )
         gen_id = self.archive.add(gen)
         self.archive.say(gen_id, proposer, "message", proposal.get("rationale", ""))
 
         # --- garde-fou avant toute exécution
-        v = guard.classify(proposal.get("paths") or [], proposal["diff"])
+        v = guard.classify([path], diff)
         self.archive.update(gen_id, risk=v.risk)
         if not v.ok:
             self.archive.update(gen_id, status="rejected", note=v.reason)
@@ -288,7 +351,7 @@ class Loop:
                              f"En attente d'autorisation ({v.risk}) : {v.reason}")
             return  # un verdict `ok` déclenchera l'évaluation
 
-        self._evaluate(gen_id, target, proposal["diff"])
+        self._evaluate(gen_id, target, diff)
 
     # ------------------------------------------------------------- éval
     def _evaluate(self, gen_id: int, target: str, diff: str) -> None:
@@ -319,9 +382,14 @@ class Loop:
                              "Évaluation interrompue avant la fin du soak.")
             return
         self.last_failures = runs[0].failures if runs else []
-        if any(r.crashed for r in runs):
+        if krash := next((r for r in runs if r.crashed), None):
+            # La sortie du harness est la seule trace de *pourquoi* il a
+            # planté. Sans elle, « crash du harness » est un mur : je pilote
+            # depuis le téléphone, le fil est le seul canal de diagnostic.
             self.archive.update(gen_id, status="failed", note="crash du harness")
-            self.archive.say(gen_id, "system", "error", "crash du harness")
+            self.archive.say(gen_id, "system", "error",
+                             "crash du harness : "
+                             + (krash.stdout[-800:].strip() or "aucune sortie"))
             return
 
         best_before = self.archive.best(self.run_id)
@@ -331,7 +399,7 @@ class Loop:
 
         scores = {
             "pass_rate": after,
-            "tokens_per_task": sum(r.tokens_per_task for r in runs) / len(runs),
+            "tokens_per_task": _moyenne(r.tokens_per_task for r in runs),
             "wall_time_p50": sum(r.wall_time_p50 for r in runs) / len(runs),
             "delta": after - before,
         }
@@ -380,9 +448,18 @@ class Loop:
         # La promotion réelle = commit + push. Le redéploiement recharge
         # le code. On ne patche jamais le processus vivant.
         target = "B" if row["role_proposer"] == "A" else "A"
-        bl.promote(ROOT, gen_id, branch=f"evolution/{self.run_id}")
         # Le workspace patché devient la nouvelle base de l'agent cible.
+        # Local, donc fait d'abord : le prochain tour part du patch même si
+        # la poussée échoue.
         self._adopt(gen_id, target)
+        try:
+            bl.promote(ROOT, gen_id, branch=f"evolution/{self.run_id}")
+        except Exception as e:                          # noqa: BLE001
+            # Un push cassé est un incident d'infrastructure, pas un patch
+            # raté. Le dégrader en `failed` fausserait `acceptance_rate`,
+            # qui note les agents — et l'humain avait dit oui.
+            self.archive.say(gen_id, "system", "error",
+                             f"patch intégré, poussée à refaire : {e}")
 
     def _adopt(self, gen_id: int, target: str) -> None:
         cand = ROOT / "candidates" / str(gen_id)

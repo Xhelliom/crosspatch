@@ -205,3 +205,88 @@ def test_promote_sans_identite_git_configuree(tmp_path, monkeypatch):
     auteur = subprocess.run(["git", "log", "-1", "--format=%an <%ae>"], cwd=root,
                             capture_output=True, text=True).stdout.strip()
     assert auteur == "crosspatch worker <worker@crosspatch.local>"
+
+
+def test_sources_donne_le_contenu_pas_les_noms(tmp_path):
+    """Le proposeur doit écrire un diff unifié : sans le contenu réel, il
+    invente les lignes de contexte et `git apply` refuse chaque patch. Ce
+    test verrouille la cause du premier run où aucune génération n'a pu
+    être mesurée."""
+    ws = _ws(tmp_path)
+    (ws / "orchestrator" / "__pycache__").mkdir()
+    (ws / "orchestrator" / "__pycache__" / "agent.py").write_text("compilé\n")
+
+    src = bl.sources(ws)
+
+    assert src == {"orchestrator/agent.py": "ancien\n"}
+
+
+def test_diff_de_est_applicable(tmp_path):
+    """Le proposeur renvoie le fichier entier : le diff qu'on en tire doit
+    passer `git apply`, là où le modèle échouait à l'écrire lui-même."""
+    ws = _ws(tmp_path)
+    diff = bl.diff_de(ws, "orchestrator/agent.py", "ancien\nnouveau\n")
+
+    ok, err = bl.apply_patch(ws, diff)
+
+    assert ok, err
+    assert (ws / "orchestrator" / "agent.py").read_text() == "ancien\nnouveau\n"
+
+
+def test_diff_de_sans_saut_de_ligne_final(tmp_path):
+    """`unified_diff` ne sait pas écrire « \\ No newline at end of file » :
+    sans normalisation le diff produit est refusé par git."""
+    ws = _ws(tmp_path)
+    (ws / "orchestrator" / "agent.py").write_text("ancien")
+
+    ok, err = bl.apply_patch(ws, bl.diff_de(ws, "orchestrator/agent.py", "neuf"))
+
+    assert ok, err
+
+
+def test_diff_de_refuse_de_sortir_du_workspace(tmp_path):
+    """`path` sort du modèle : un `../` recopierait un fichier de l'hôte
+    dans le diff, donc dans l'archive et l'UI. Le garde-fou passe après."""
+    (tmp_path / "secret.txt").write_text("clé\n")
+    ws = _ws(tmp_path)
+
+    assert bl.diff_de(ws, "../secret.txt", "autre\n") == ""
+
+
+def test_diff_de_fichier_inchange_ne_produit_rien(tmp_path):
+    """Un fichier réécrit à l'identique est un tour sans proposition."""
+    ws = _ws(tmp_path)
+
+    assert bl.diff_de(ws, "orchestrator/agent.py", "ancien\n") == ""
+
+
+def test_https_convertit_les_remotes_ssh():
+    """Le conteneur n'a pas de client ssh et aucune clé à lui donner : sans
+    conversion, `promote` meurt sur « cannot run ssh » juste après le oui."""
+    assert bl._https("git@github.com:o/r.git") == "https://github.com/o/r.git"
+    assert bl._https("ssh://git@gitlab.com:o/r.git") == "https://gitlab.com/o/r.git"
+    # Déjà en HTTPS, ou chemin local : on n'y touche pas.
+    assert bl._https("https://github.com/o/r.git") == "https://github.com/o/r.git"
+    assert bl._https("/tmp/remote.git") == "/tmp/remote.git"
+
+
+def test_push_avec_jeton_vise_le_remote_converti(depot, monkeypatch):
+    """Le jeton implique HTTPS : `GIT_ASKPASS` ne sert à rien en ssh."""
+    root, remote = depot
+    subprocess.run(["git", "remote", "set-url", "origin",
+                    "git@github.com:o/r.git"], cwd=root, check=True)
+    monkeypatch.setenv("GIT_PUSH_TOKEN", "jeton-bidon")
+    vus = {}
+
+    vrai = subprocess.run
+
+    def espion(cmd, **kw):
+        if cmd[:2] == ["git", "push"]:
+            vus["cible"] = cmd[2]
+            return subprocess.CompletedProcess(cmd, 0, "", "")
+        return vrai(cmd, **kw)
+
+    monkeypatch.setattr(bl.subprocess, "run", espion)
+    bl.promote(root, 7, branch="evolution/x")
+
+    assert vus["cible"] == "https://github.com/o/r.git"

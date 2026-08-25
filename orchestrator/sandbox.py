@@ -34,7 +34,7 @@ AGENT_KEY = "AGENT_OPENROUTER_API_KEY"
 @dataclass
 class EvalResult:
     pass_rate: float
-    tokens_per_task: float
+    tokens_per_task: float | None
     wall_time_p50: float
     failures: list[dict]
     stdout: str
@@ -93,8 +93,13 @@ class Runner:
             ) as sb:
                 sb.files.write("/tmp/work.tar", _tar(workspace))
                 sb.files.write("/tmp/harness.tar", _tar(harness))
+                # Le template tourne en `user`, pas en root : sans `sudo`,
+                # créer /work et /harness échoue et *toutes* les tâches
+                # ratent sans que la sortie ne dise pourquoi. Les chemins
+                # eux-mêmes sont figés par `harness/run.py`, immuable.
                 setup = (
-                    "mkdir -p /work /harness && "
+                    "sudo mkdir -p /work /harness && "
+                    "sudo chown $(id -un) /work /harness && "
                     "tar xf /tmp/work.tar -C /work && "
                     "tar xf /tmp/harness.tar -C /harness && "
                     "chmod -R a-w /harness"
@@ -124,7 +129,7 @@ class Runner:
 
         return EvalResult(
             pass_rate=payload["pass_rate"],
-            tokens_per_task=payload.get("tokens_per_task", 0.0),
+            tokens_per_task=payload.get("tokens_per_task"),
             wall_time_p50=payload.get("wall_time_p50", 0.0),
             failures=payload.get("failures", []),
             stdout=stdout,

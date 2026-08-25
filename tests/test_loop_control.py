@@ -156,6 +156,7 @@ def test_un_tour_rate_est_archive_et_la_boucle_continue(loop, monkeypatch):
 
     monkeypatch.setattr(lo, "_ideate", ideate_qui_rate)
     monkeypatch.setattr(lo, "_turn", lambda p, t: None)
+    monkeypatch.setattr(lo, "_mesurer_reference", lambda: None)
     lo.run()
 
     from orchestrator.loop import MAX_ECHECS
@@ -179,6 +180,7 @@ def test_le_compteur_d_echecs_se_remet_a_zero(loop, monkeypatch):
 
     monkeypatch.setattr(lo, "_ideate", ideate)
     monkeypatch.setattr(lo, "_turn", lambda p, t: None)
+    monkeypatch.setattr(lo, "_mesurer_reference", lambda: None)
     lo.run()
     assert len(appels) >= 5      # deux échecs non consécutifs n'arrêtent rien
 
@@ -264,3 +266,82 @@ class _Eval:
     wall_time_p50 = 0.0
     failures: list = []
     crashed = False
+
+
+# --- mesure de référence ---------------------------------------------------
+
+class _Runs:
+    """Un soak qui renvoie N résultats non plantés, avec un pass_rate donné."""
+
+    def __init__(self, pass_rate: float, crashed: bool = False):
+        self.pass_rate, self.crashed = pass_rate, crashed
+        self.appels = 0
+
+    def __call__(self, workspace, harness, n=3, gen_id=None, avant_chaque=None):
+        self.appels += 1
+        from orchestrator.sandbox import EvalResult
+        return [EvalResult(self.pass_rate, 0.0, 0.0, [], "", self.crashed)
+                for _ in range(n)]
+
+
+def test_la_reference_est_mesuree_avant_le_premier_tour(loop, monkeypatch):
+    """Sans elle, le premier patch qui passe s'attribue le score que l'agent
+    obtenait déjà."""
+    lo, _, _ = loop
+    soak = _Runs(0.4)
+    monkeypatch.setattr(lo.runner, "soak", soak)
+
+    lo._mesurer_reference()
+
+    ref = lo.archive.best(lo.run_id)
+    assert soak.appels == 1
+    assert ref["role_proposer"] == "baseline"
+    assert ref["scores"] and '"pass_rate": 0.4' in ref["scores"]
+    # Elle ne doit pas passer pour une proposition acceptée.
+    assert lo.archive.acceptance_rate(lo.run_id)["n"] == 0
+
+
+def test_la_reference_n_est_mesuree_qu_une_fois(loop, monkeypatch):
+    """Le worker redémarre en cours de run : re-mesurer brûlerait N sandboxes
+    et réécrirait le point de comparaison."""
+    lo, _, _ = loop
+    soak = _Runs(0.4)
+    monkeypatch.setattr(lo.runner, "soak", soak)
+
+    lo._mesurer_reference()
+    lo._mesurer_reference()
+
+    assert soak.appels == 1
+
+
+def test_une_reference_qui_plante_ne_devient_pas_un_score(loop, monkeypatch):
+    """Un crash du harness ne doit pas s'archiver comme un 0.0 mesuré : le
+    delta serait faux dans l'autre sens."""
+    lo, _, _ = loop
+    monkeypatch.setattr(lo.runner, "soak", _Runs(0.0, crashed=True))
+
+    lo._mesurer_reference()
+
+    assert lo.archive.best(lo.run_id) is None
+
+
+def test_une_poussee_ratee_ne_degrade_pas_un_patch_accepte(loop, monkeypatch):
+    """Un push cassé est un incident d'infrastructure. Le compter comme un
+    patch raté fausse `acceptance_rate`, qui note les agents — et l'humain
+    avait dit oui."""
+    lo, L, _ = loop
+    gen = _gen(lo, status="awaiting_human", role_proposer="A")
+
+    def push_casse(*a, **kw):
+        raise RuntimeError("git push : cannot run ssh")
+
+    monkeypatch.setattr(L.bl, "promote", push_casse)
+    adoptes = []
+    monkeypatch.setattr(lo, "_adopt", lambda g, t: adoptes.append((g, t)))
+
+    lo.human_verdict(gen, "ok")
+
+    assert lo.archive.get(gen)["status"] == "completed"
+    assert adoptes == [(gen, "B")]          # adopté malgré l'échec de poussée
+    fil = [e["body"] for e in lo.archive.transcript()]
+    assert any("poussée à refaire" in b for b in fil)
