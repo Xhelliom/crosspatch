@@ -15,6 +15,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import time
 from pathlib import Path
 
 import httpx
@@ -25,6 +26,7 @@ SYSTEM = "Tu écris du Python. Réponds avec un seul bloc de code, rien d'autre.
 
 def solve(prompt: str, workdir: Path) -> None:
     code, usage = _complete(f"{prompt}\n\nÉcris le module Python complet.")
+    time.sleep(1)  # Ajout d'un délai d'attente pour réduire la fréquence des appels API
     (workdir / "solution.py").write_text(_extract(code))
     # Le harness ne voit pas les appels réseau de l'agent : sans ce report,
     # `tokens_per_task` restait à 0.0 et les agents proposaient d'optimiser

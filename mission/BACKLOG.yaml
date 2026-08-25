@@ -1,3 +1,31 @@
-# Généré par les agents en phase d'idéation. Ne pas seeder à la main :
-# ce que les agents trouvent (ou ne trouvent pas) est le résultat.
-items: []
+items:
+- id: IMP-001
+  direction_id: DIR-002
+  title: Optimiser la requête API pour réduire le nombre de tokens
+  evidence: La métrique `tokens_per_task` est de 504.11111111111114, ce qui est relativement
+    élevé.
+  hypothesis: si on optimise la requête API pour réduire le nombre de tokens utilisés,
+    alors `tokens_per_task` devrait diminuer de 10% sans affecter le `pass_rate`.
+  goal: A
+  expected_gain: 0.1
+  confidence: 0.7
+  cost: 1.0
+  risk: low
+  state: submitted
+  author: A
+  born_gen: null
+- id: IMP-002
+  direction_id: DIR-002
+  title: Implémenter un cache pour les requêtes API
+  evidence: La métrique `wall_time_p50` est de 3.645197550455729, ce qui pourrait
+    être amélioré.
+  hypothesis: si on implémente un cache pour les requêtes API, alors `wall_time_p50`
+    devrait diminuer de 20% sans affecter le `pass_rate`.
+  goal: A
+  expected_gain: 0.2
+  confidence: 0.6
+  cost: 2.0
+  risk: medium
+  state: submitted
+  author: A
+  born_gen: null
