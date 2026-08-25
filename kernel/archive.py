@@ -210,6 +210,45 @@ class Archive:
             (run_id,),
         ).fetchone()
 
+    def reference(self, run_id: str) -> sqlite3.Row | None:
+        """La mesure de l'agent non patché, s'il y en a une.
+
+        `best()` peut la renvoyer — c'est voulu, elle sert de plancher aux
+        deltas — mais l'UI doit pouvoir dire « 0.667 depuis 0.667 » plutôt
+        que d'afficher la référence comme un record.
+        """
+        return self.db.execute(
+            "SELECT * FROM generations WHERE run_id=? "
+            "AND role_proposer='baseline' AND status='completed' LIMIT 1",
+            (run_id,),
+        ).fetchone()
+
+    def pipeline(self, run_id: str) -> dict:
+        """Où meurent les propositions, en une ligne.
+
+        Un `acceptance_rate` à 0 ne dit pas si les agents ont de mauvaises
+        idées ou si aucun patch n'arrive jusqu'au harness. La distinction
+        change complètement ce qu'il faut réparer.
+        """
+        rows = self.db.execute(
+            "SELECT status, note FROM generations "
+            "WHERE run_id=? AND role_proposer IN ('A','B')",
+            (run_id,),
+        ).fetchall()
+
+        def compte(pred) -> int:
+            return sum(1 for r in rows if pred(r["status"], (r["note"] or "")))
+
+        return {
+            "proposees": len(rows),
+            "inapplicables": compte(lambda s, n: n.startswith("git apply")),
+            "harness_casse": compte(lambda s, n: n.startswith("crash du harness")),
+            "regressions": compte(lambda s, n: n == "régression"),
+            "refusees": compte(lambda s, n: s == "rejected"),
+            "acceptees": compte(lambda s, n: s == "completed"),
+            "en_attente": compte(lambda s, n: s.startswith("awaiting")),
+        }
+
     def recent(self, run_id: str, n: int = 20) -> list[sqlite3.Row]:
         return self.db.execute(
             "SELECT * FROM generations WHERE run_id=? ORDER BY id DESC LIMIT ?",
@@ -234,10 +273,12 @@ class Archive:
 
         `rejected` et `failed` comptent tous deux comme non acceptés : un patch
         refusé par le garde-fou est un patch qu'il ne fallait pas proposer.
+        La mesure de référence (`role_proposer='baseline'`) est exclue : ce
+        n'est la proposition de personne, la compter gonflerait le taux.
         """
         rows = self.db.execute(
             "SELECT role_proposer, status FROM generations "
-            "WHERE run_id=? AND status IN "
+            "WHERE run_id=? AND role_proposer IN ('A','B') AND status IN "
             "('completed','failed','rejected') ORDER BY id DESC LIMIT ?",
             (run_id, window),
         ).fetchall()

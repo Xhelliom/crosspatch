@@ -55,6 +55,13 @@ SUSPICIOUS = (
     re.compile(r"\b(?:BUDGET|max_usd|max_spend)\b"),  # toucher au plafond
     re.compile(r"\.\./"),                            # échappement de chemin
     re.compile(r"\bCONTROL_TOKEN\b"),                 # jeton de contrôle
+    # Le modèle des agents est milieu de gamme *délibérément* : le headroom
+    # est le sujet de l'expérience. Un patch d'une ligne sur `MODEL` ferait
+    # bondir le pass_rate sans rien améliorer. Non interdit — c'est une
+    # décision humaine, pas la leur — mais jamais silencieux.
+    # Ancré sur `^[+-]` : `agent.py` contient déjà `"model": MODEL`, et sans
+    # cet ancrage tout patch de `_complete` remonterait sur son contexte.
+    re.compile(r"^[+-].*\b(?:AGENT_)?MODEL\b", re.M),
 )
 
 

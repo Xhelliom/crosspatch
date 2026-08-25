@@ -71,7 +71,32 @@ def test_jeton_de_controle():
                           _diff("+print(os.environ['CONTROL_TOKEN'])")).needs_human
 
 
+def test_changer_le_modele_de_l_agent():
+    """Le milieu de gamme est délibéré : le headroom est le sujet. Un agent
+    qui s'auto-upgrade ferait bondir le pass_rate sans rien améliorer."""
+    v = guard.classify(["orchestrator/agent.py"],
+                       _diff('-MODEL = "mistralai/mistral-medium-3.1"\n'
+                             '+MODEL = "anthropic/claude-opus-4"'))
+    assert v.needs_human and v.risk == "high", v.reason
+
+
+def test_changer_le_modele_via_l_environnement():
+    assert guard.classify(
+        ["orchestrator/sandbox.py"],
+        _diff('+env["AGENT_MODEL"] = "un-modele-plus-fort"')).needs_human
+
+
 # --- les faux positifs que le resserrement doit avoir supprimés ------------
+
+
+def test_modele_en_simple_ligne_de_contexte_passe():
+    """`agent.py` contient déjà `"model": MODEL` : tout patch de `_complete`
+    l'emporte dans son contexte sans y toucher."""
+    v = guard.classify(["orchestrator/agent.py"],
+                       _diff(' r = httpx.post(\n'
+                             '     "model": MODEL,\n'
+                             '+    timeout=180,'))
+    assert v.ok and not v.needs_human, v.reason
 
 def test_auto_verification_par_subprocess_passe():
     """DIR-001 : donner un retour d'exécution à l'agent impose de lancer

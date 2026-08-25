@@ -117,6 +117,16 @@ def test_acceptance_rate(archive):
     assert taux["n"] == 3
 
 
+def test_acceptance_rate_ignore_la_reference(archive):
+    """La mesure de référence n'est la proposition de personne : la compter
+    comme acceptée gonflerait le taux dès le premier tour."""
+    _gen(archive, role_proposer="baseline", status="completed")
+    _gen(archive, status="failed")
+    taux = archive.acceptance_rate("R")
+    assert taux["overall"] == 0.0
+    assert taux["n"] == 1
+
+
 def test_acceptance_rate_sans_donnees(archive):
     assert archive.acceptance_rate("R") == {"overall": None, "A": None,
                                             "B": None, "n": 0}
@@ -212,3 +222,32 @@ def test_transcript_reprend_apres_un_curseur(archive):
 def test_transcript_accepte_un_gen_id_nul(archive):
     archive.say(None, "system", "error", "sans génération")
     assert archive.transcript()[0]["gen_id"] is None
+
+
+def test_reference(archive):
+    """`best()` peut renvoyer la référence — c'est voulu. `reference()`
+    permet à l'UI de ne pas l'afficher comme un record."""
+    assert archive.reference("R") is None
+    g = _gen(archive, role_proposer="baseline")
+    archive.update(g, status="completed", scores={"pass_rate": 0.4})
+    _gen(archive, status="completed")
+    assert archive.reference("R")["id"] == g
+
+
+def test_pipeline_dit_ou_meurent_les_propositions(archive):
+    """Un acceptance_rate à 0 ne dit pas si les idées sont mauvaises ou si
+    aucun patch n'atteint le harness."""
+    g = _gen(archive, role_proposer="baseline")
+    archive.update(g, status="completed", scores={"pass_rate": 0.4})
+    archive.update(_gen(archive), status="failed", note="git apply : corrupt patch")
+    archive.update(_gen(archive), status="failed", note="crash du harness : boum")
+    archive.update(_gen(archive), status="failed", note="régression")
+    archive.update(_gen(archive), status="rejected", note="chemin protégé")
+    archive.update(_gen(archive), status="completed", note="")
+    archive.update(_gen(archive), status="awaiting_human", note="")
+
+    p = archive.pipeline("R")
+
+    assert p == {"proposees": 6, "inapplicables": 1, "harness_casse": 1,
+                 "regressions": 1, "refusees": 1, "acceptees": 1,
+                 "en_attente": 1}
