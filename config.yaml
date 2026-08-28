@@ -1,4 +1,4 @@
-run_id: "2026-08-28-006"   # backlog persistant : la déduplication a enfin une mémoire
+run_id: "2026-08-28-007"   # le proposeur lit le backlog au lieu de recopier l'exemple
 model: "mistralai/mistral-medium-3.1"   # milieu de gamme : le headroom est le sujet
 archive_path: "data/archive.db"
 sandbox_template: "base"
