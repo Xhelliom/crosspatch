@@ -24,13 +24,25 @@ SYSTEM = "Tu écris du Python. Réponds avec un seul bloc de code, rien d'autre.
 
 
 def solve(prompt: str, workdir: Path) -> None:
-    code, usage = _complete(f"{prompt}\n\nÉcris le module Python complet.")
+    code, usage = _complete(f"{_compress_context(prompt)}\n\nÉcris le module Python complet.")
     (workdir / "solution.py").write_text(_extract(code))
     # Le harness ne voit pas les appels réseau de l'agent : sans ce report,
     # `tokens_per_task` restait à 0.0 et les agents proposaient d'optimiser
     # un chiffre qui n'avait jamais été mesuré. C'est de l'instrumentation,
     # pas une aide à résoudre — garde-la si tu réécris ce fichier.
     (workdir / "usage.json").write_text(json.dumps(usage))
+
+
+def _compress_context(prompt: str) -> str:
+    """Compresse le contexte du prompt en supprimant les informations redondantes."""
+    lines = prompt.split('\n')
+    compressed_lines = []
+    for line in lines:
+        if not line.strip() or line.startswith('#'):
+            continue
+        if line not in compressed_lines:
+            compressed_lines.append(line)
+    return '\n'.join(compressed_lines)
 
 
 def _complete(user: str) -> tuple[str, dict]:
