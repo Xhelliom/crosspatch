@@ -23,10 +23,11 @@ import httpx
 MODEL = os.environ.get("AGENT_MODEL", "mistralai/mistral-medium-3.1")
 SYSTEM = "Tu écris du Python. Réponds avec un seul bloc de code, rien d'autre."
 
+MAX_RETRIES = 3
+RETRY_DELAY = 1
 
 def solve(prompt: str, workdir: Path) -> None:
     code, usage = _complete(f"{prompt}\n\nÉcris le module Python complet.")
-    time.sleep(1)  # Ajout d'un délai d'attente pour réduire la fréquence des appels API
     (workdir / "solution.py").write_text(_extract(code))
     # Le harness ne voit pas les appels réseau de l'agent : sans ce report,
     # `tokens_per_task` restait à 0.0 et les agents proposaient d'optimiser
@@ -36,22 +37,28 @@ def solve(prompt: str, workdir: Path) -> None:
 
 
 def _complete(user: str) -> tuple[str, dict]:
-    r = httpx.post(
-        "https://openrouter.ai/api/v1/chat/completions",
-        headers={"Authorization": f"Bearer {os.environ['OPENROUTER_API_KEY']}"},
-        json={
-            "model": MODEL,
-            "messages": [
-                {"role": "system", "content": SYSTEM},
-                {"role": "user", "content": user},
-            ],
-            "temperature": 0.2,
-        },
-        timeout=120,
-    )
-    r.raise_for_status()
-    data = r.json()
-    return data["choices"][0]["message"]["content"], data.get("usage") or {}
+    for attempt in range(MAX_RETRIES):
+        try:
+            r = httpx.post(
+                "https://openrouter.ai/api/v1/chat/completions",
+                headers={"Authorization": f"Bearer {os.environ['OPENROUTER_API_KEY']}"},
+                json={
+                    "model": MODEL,
+                    "messages": [
+                        {"role": "system", "content": SYSTEM},
+                        {"role": "user", "content": user},
+                    ],
+                    "temperature": 0.2,
+                },
+                timeout=120,
+            )
+            r.raise_for_status()
+            data = r.json()
+            return data["choices"][0]["message"]["content"], data.get("usage") or {}
+        except httpx.HTTPError as e:
+            if attempt == MAX_RETRIES - 1:
+                raise
+            time.sleep(RETRY_DELAY)
 
 
 def _extract(text: str) -> str:

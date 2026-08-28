@@ -241,28 +241,59 @@ def _https(url: str) -> str:
     return url
 
 
-def _push(root: Path, branch: str) -> None:
-    """Pousse HEAD sur `branch`, en gardant le jeton hors de portée.
+def _acces_distant(root: Path) -> tuple[dict, str]:
+    """L'environnement et l'URL à donner à git pour joindre le remote.
 
     Le jeton ne doit apparaître ni dans `argv` (lisible par n'importe quel
     `ps` dans le conteneur), ni dans `.git/config` (qui finirait dans une
-    couche d'image). `GIT_ASKPASS` le passe par un canal que git seul lit,
-    et le message d'erreur est expurgé avant d'entrer dans l'archive.
+    couche d'image). `GIT_ASKPASS` le passe par un canal que git seul lit.
     """
     token = os.environ.get("GIT_PUSH_TOKEN")
     env = dict(os.environ)
-    cible = "origin"
-    if token:
-        askpass = root / ".git" / "crosspatch-askpass"
-        askpass.write_text('#!/bin/sh\nprintf %s "$GIT_PUSH_TOKEN"\n')
-        askpass.chmod(0o700)
-        env.update(GIT_ASKPASS=str(askpass), GIT_TERMINAL_PROMPT="0")
-        # L'URL est calculée ici, pas écrite dans .git/config : `GIT_ASKPASS`
-        # ne sert qu'en HTTPS, et le remote du dépôt est souvent en ssh.
-        origine = subprocess.run(["git", "remote", "get-url", "origin"],
-                                 cwd=root, capture_output=True, text=True)
-        cible = _https(origine.stdout.strip()) or "origin"
+    if not token:
+        return env, "origin"
+    askpass = root / ".git" / "crosspatch-askpass"
+    askpass.write_text('#!/bin/sh\nprintf %s "$GIT_PUSH_TOKEN"\n')
+    askpass.chmod(0o700)
+    env.update(GIT_ASKPASS=str(askpass), GIT_TERMINAL_PROMPT="0")
+    # L'URL est calculée ici, pas écrite dans .git/config : `GIT_ASKPASS`
+    # ne sert qu'en HTTPS, et le remote du dépôt est souvent en ssh.
+    origine = subprocess.run(["git", "remote", "get-url", "origin"],
+                             cwd=root, capture_output=True, text=True)
+    return env, (_https(origine.stdout.strip()) or "origin")
 
+
+def _rebaser_sur_le_distant(root: Path, branch: str) -> None:
+    """Cale HEAD sur la branche distante, sans toucher au répertoire.
+
+    `.git` vit dans l'image : un `docker build` le remet à l'état du dépôt
+    hôte et efface les commits que le worker avait faits dans l'image
+    précédente. Sa branche repart alors d'un ancêtre commun et toute
+    poussée est rejetée en `fetch first` — pour le reste du run, puisque
+    rien ne se recolle tout seul.
+
+    `reset --soft` déplace HEAD sans rien changer aux fichiers : le commit
+    qui suit porte le contenu de /app et le distant pour parent. La
+    poussée redevient un fast-forward, quel que soit l'état du `.git`
+    local. Branche absente du distant (premier tour d'un run) : il n'y a
+    rien sur quoi se caler, on commite sur HEAD.
+    """
+    env, cible = _acces_distant(root)
+    p = subprocess.run(["git", "fetch", cible, f"refs/heads/{branch}"],
+                       cwd=root, env=env, capture_output=True, text=True)
+    if p.returncode:
+        return
+    subprocess.run(["git", "reset", "--soft", "FETCH_HEAD"],
+                   cwd=root, check=True)
+
+
+def _push(root: Path, branch: str) -> None:
+    """Pousse HEAD sur `branch`, en gardant le jeton hors de portée.
+
+    Le message d'erreur est expurgé avant d'entrer dans l'archive.
+    """
+    token = os.environ.get("GIT_PUSH_TOKEN")
+    env, cible = _acces_distant(root)
     p = subprocess.run(["git", "push", cible, f"HEAD:refs/heads/{branch}"],
                        cwd=root, env=env, capture_output=True, text=True)
     if p.returncode:
@@ -279,6 +310,7 @@ def promote(root: Path, gen_id: int, branch: str = "evolution/main") -> None:
     cand = root / "candidates" / str(gen_id)
     for rel in MUTABLE_DIRS:
         _mirror(cand / rel, root / rel)
+    _rebaser_sur_le_distant(root, branch)
     subprocess.run(["git", "add", "-A"], cwd=root, check=True)
     subprocess.run([*_git(), "commit", "-m", f"gen {gen_id} (validée)"],
                    cwd=root, check=True)
@@ -303,6 +335,12 @@ def rollback(root: Path, gen_id: int, branch: str = "evolution/main") -> str:
     L'historique reste vrai : on voit qu'une génération a été intégrée puis
     annulée, ce qui est précisément ce qu'on veut pouvoir relire.
     """
+    # ponytail: `find_commit` ne lit que l'historique local. Juste après un
+    # `docker build`, celui-ci est reparti de l'état du dépôt hôte et la
+    # génération visée est introuvable — l'appel échoue proprement plutôt
+    # que d'annuler autre chose. La première promotion recolle l'historique
+    # sur le distant (`_rebaser_sur_le_distant`) et le rollback remarche.
+    # Si ça devient gênant : fetch puis revert sur un clone jetable.
     sha = find_commit(root, gen_id)
     if sha is None:
         raise LookupError(f"aucun commit trouvé pour la génération {gen_id}")

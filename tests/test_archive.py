@@ -165,6 +165,21 @@ def test_spend_vide_vaut_zero(archive):
     assert archive.spent() == 0.0
 
 
+def test_par_nature_ventile_et_compte(archive):
+    """`n` est le nombre de microVM E2B démarrées, pas leur coût."""
+    g = _gen(archive)
+    archive.charge(g, "llm", 0.25)
+    archive.charge(g, "sandbox", 0.10)
+    archive.charge(g, "sandbox", 0.20)
+    v = archive.par_nature()
+    assert v["llm"] == {"n": 1, "usd": pytest.approx(0.25)}
+    assert v["sandbox"] == {"n": 2, "usd": pytest.approx(0.30)}
+
+
+def test_par_nature_vide(archive):
+    assert archive.par_nature() == {}
+
+
 # --- plan de contrôle ------------------------------------------------------
 
 def test_control_ecrit_puis_relit(archive):
