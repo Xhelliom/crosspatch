@@ -89,6 +89,9 @@ def state() -> dict:
                      "delta": (None if courant is None or reference is None
                                else round(courant - reference, 4))},
         "pipeline": archive.pipeline(cfg["run_id"]),
+        # Où en est le tour, écrit par le worker dans `control` : « running »
+        # ne disait pas s'il attend un modèle ou sa deuxième microVM.
+        "phase": archive.get_control("phase", "—"),
         "convergence": {
             # Le worker vit dans un autre conteneur : il dépose sa mesure de
             # convergence dans `control`, seul canal partagé.

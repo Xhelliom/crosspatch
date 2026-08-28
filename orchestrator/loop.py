@@ -165,9 +165,8 @@ class Loop:
         gen_id = self.archive.add(Generation(
             run_id=self.run_id, role_proposer="baseline", status="running",
             note="mesure de référence — agent non patché"))
-        runs = self.runner.soak(self.ws["A"], ROOT / "harness",
-                                n=self.cfg["soak_runs"], gen_id=gen_id,
-                                avant_chaque=self._attendre_reprise)
+        self._phase("mesure de référence")
+        runs = self._soak(self.ws["A"], gen_id)
         if len(runs) < self.cfg["soak_runs"] or any(r.crashed for r in runs):
             # Sans référence mesurable, les deltas resteraient faux : mieux
             # vaut le dire que laisser la boucle produire des chiffres qui
@@ -189,6 +188,31 @@ class Loop:
                          f"référence : pass_rate {pass_rate:.3f} sur "
                          f"{len(runs)} runs, avant tout patch")
 
+    # ---------------------------------------------------------------- phase
+    def _phase(self, nom: str) -> None:
+        """Où en est le tour. Le worker est un autre conteneur : sa phase
+        n'existe nulle part ailleurs que dans sa propre pile d'appels, et
+        `/state` ne pouvait dire qu'« une génération est `running` » — pas
+        si elle attend un modèle ou sa deuxième microVM. Même canal que
+        `dup_streak`, pour la même raison.
+        """
+        self.archive.set_control("phase", nom)
+
+    def _soak(self, workspace, gen_id: int):
+        """Les N runs, en annonçant lequel tourne. Le garde-fou de dépense
+        (`_attendre_reprise`) reste appelé avant chaque microVM."""
+        fait = 0
+
+        def avant() -> bool:
+            nonlocal fait
+            fait += 1
+            self._phase(f"soak {fait}/{self.cfg['soak_runs']}")
+            return self._attendre_reprise()
+
+        return self.runner.soak(workspace, ROOT / "harness",
+                                n=self.cfg["soak_runs"], gen_id=gen_id,
+                                avant_chaque=avant)
+
     # ------------------------------------------------------------------ run
     def run(self) -> None:
         self._mesurer_reference()
@@ -197,8 +221,10 @@ class Loop:
             self._drain_control()
             if self.stop:
                 self.archive.say(None, "system", "message", "Arrêt demandé.")
+                self._phase("arrêté")
                 return
             if self.paused:
+                self._phase("en pause")
                 time.sleep(IDLE)
                 continue
 
@@ -206,6 +232,7 @@ class Loop:
             # A et B continuent de patcher un code que l'humain n'a pas encore
             # laissé avancer, produisent des doublons et brûlent du budget.
             if self.archive.awaiting(self.run_id):
+                self._phase("attente d'arbitrage")
                 time.sleep(IDLE)
                 continue
 
@@ -218,6 +245,7 @@ class Loop:
             if self.archive.plateau(self.run_id, self.cfg["plateau_window"]):
                 self.archive.say(None, "system", "message",
                                  "Plateau atteint. CONVERGED.")
+                self._phase("arrêté — plateau")
                 return
 
             proposer = "A" if turn % 2 == 0 else "B"
@@ -259,6 +287,7 @@ class Loop:
         C'est ici que le backlog naît. Rien n'est seedé à la main : si les
         agents ne trouvent rien à proposer, c'est un résultat, pas une panne.
         """
+        self._phase("idéation")
         last = self.archive.best(self.run_id)
         scores = json.loads(last["scores"]) if last and last["scores"] else {}
         live_dirs = dr.active(DIRS)
@@ -308,6 +337,7 @@ class Loop:
             if self.dup_streak >= 3:
                 self.archive.say(None, "system", "message",
                                  "Plus d'idées neuves. CONVERGED.")
+                self._phase("arrêté — convergé")
                 self.archive.set_control("stop", "1")
         else:
             self.dup_streak = 0
@@ -320,6 +350,7 @@ class Loop:
     # ----------------------------------------------------------------- tour
     def _turn(self, proposer: str, target: str) -> None:
         """proposer lit le code de target et propose un patch. Jamais le sien."""
+        self._phase("proposition")
         items = bl.load(self.archive)
         ranked = bl.rank(items)
 
@@ -392,6 +423,7 @@ class Loop:
 
     # ------------------------------------------------------------- éval
     def _evaluate(self, gen_id: int, target: str, diff: str) -> None:
+        self._phase("évaluation")
         self.archive.update(gen_id, status="running")
         cand = ROOT / "candidates" / str(gen_id)
         shutil.rmtree(cand, ignore_errors=True)
@@ -407,9 +439,7 @@ class Loop:
             self.archive.say(gen_id, "system", "error", f"patch inapplicable : {err}")
             return
 
-        runs = self.runner.soak(cand, ROOT / "harness",
-                                n=self.cfg["soak_runs"], gen_id=gen_id,
-                                avant_chaque=self._attendre_reprise)
+        runs = self._soak(cand, gen_id)
         if len(runs) < self.cfg["soak_runs"]:
             # Interrompu par un arrêt : le score partiel n'est pas comparable
             # aux autres générations, on ne l'archive pas comme un résultat.

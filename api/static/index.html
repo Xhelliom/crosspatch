@@ -176,6 +176,55 @@ button.go:hover{background:rgba(88,191,166,.1)}
 .empty b{display:block;color:var(--bone);font-family:var(--display);
   font-weight:500;font-size:15px;margin-bottom:6px}
 
+/* ---- le cycle d'une génération ----
+   Les compteurs viennent tous de `pipeline`, déjà dans /state : ils étaient
+   écrasés dans une infobulle qu'on ne peut pas survoler sur un téléphone. */
+let nbIdees = null;   // rempli par drawBacklog, qui charge déjà /backlog
+
+// [étape, valeur, ce qui meurt juste après]
+const ETAPES = (p, n) => [
+  ["idéation",    n ?? "—",                "hors backlog", p.hors_backlog],
+  ["proposition", p.proposees ?? 0,        "inapplicables", p.inapplicables],
+  ["sandbox ×3",  p.proposees - (p.inapplicables || 0), "harness cassé", p.harness_casse],
+  ["score",       null,                    "régressions", p.regressions],
+  ["verdict",     p.en_attente ?? 0,       "refusées", p.refusees],
+  ["intégration", p.acceptees ?? 0,        null, 0],
+];
+
+// Quelle étape pulse, selon la phase que le worker écrit dans `control`.
+function etapeActive(phase) {
+  const f = String(phase || "");
+  if (f.startsWith("idéation")) return 0;
+  if (f.startsWith("proposition")) return 1;
+  if (f.startsWith("soak") || f.startsWith("évaluation")
+      || f.startsWith("mesure")) return 2;
+  if (f.startsWith("attente")) return 4;
+  return -1;                       // en pause, arrêté : rien ne travaille
+}
+
+function drawFlux(s) {
+  const box = $("#flux");
+  const p = s.pipeline || {};
+  const actif = etapeActive(s.phase);
+  box.innerHTML = "";
+  ETAPES(p, nbIdees).forEach(([nom, val, perte, n], i) => {
+    const e = el("div", "etape" + (i === actif ? " on" : ""));
+    e.appendChild(el("span", "nom", nom));
+    if (val !== null && val !== undefined) e.appendChild(el("b", "val", String(val)));
+    box.appendChild(e);
+    if (perte === null) return;
+    box.appendChild(el("div", "lien"));
+    const d = el("div", "perte" + (n ? "" : " rien"));
+    d.innerHTML = `↳ <b>${n || 0}</b> ${perte}`;
+    box.appendChild(d);
+    box.appendChild(el("div", "lien"));
+  });
+  const etat = el("div", "hint");
+  etat.style.marginTop = "12px";
+  etat.textContent = "phase : " + (s.phase || "—");
+  box.appendChild(etat);
+}
+
 /* ---- coupe-circuit ---- */
 /* L'identité sur deux lignes : à 390 px, le titre, l'identifiant de run et
    les deux boutons ne tiennent pas côte à côte, et c'est le bouton qui
@@ -281,6 +330,39 @@ form.newdir textarea{min-height:64px}
   main{max-width:820px}
 }
 
+/* ---- le cycle d'une génération, alimenté par /state ----
+   Un schéma d'architecture se lit une fois. Celui-ci montre où en est le
+   tour et où meurent les propositions, donc il sert à chaque coup d'œil.
+   En CSS et pas en SVG : quatre boîtes et des flèches n'ont pas besoin
+   d'un système de coordonnées, et le CSS donne le responsive et le thème. */
+.flux{display:flex;flex-direction:column;gap:0}
+.etape{
+  border:1px solid var(--edge);border-radius:10px;background:var(--raised);
+  padding:9px 11px;display:flex;align-items:baseline;gap:9px;
+}
+.etape .nom{
+  font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--mute);
+  flex:1;
+}
+.etape .val{font-family:var(--display);font-weight:800;font-size:15px}
+/* L'étape en cours. La pulsation dit « ça travaille » — c'est la seule
+   chose que le fil ne pouvait pas montrer entre deux événements. */
+.etape.on{border-color:var(--bone);background:#1E2330}
+.etape.on .nom{color:var(--bone)}
+.etape.on::before{
+  content:"";width:6px;height:6px;border-radius:50%;background:var(--b);
+  animation:pouls 1.6s ease-in-out infinite;flex:none;
+}
+@keyframes pouls{50%{opacity:.25}}
+/* Ce qui meurt à cette étape : une branche qui sort du flux. */
+.perte{
+  display:flex;align-items:center;gap:6px;font-size:10px;color:var(--mute);
+  padding:3px 0 3px 18px;
+}
+.perte b{color:var(--alarm);font-weight:500}
+.perte.rien{opacity:.35}
+.lien{width:1px;height:11px;background:var(--edge);margin-left:16px}
+
 @media(prefers-reduced-motion:reduce){*{transition:none!important}}
 </style>
 </head>
@@ -341,6 +423,7 @@ form.newdir textarea{min-height:64px}
     <div class="tabs" role="tablist">
       <button role="tab" data-pane="backlog" aria-selected="true">backlog</button>
       <button role="tab" data-pane="dirs" aria-selected="false">directions</button>
+      <button role="tab" data-pane="cycle" aria-selected="false">cycle</button>
       <button role="tab" data-pane="ctl" aria-selected="false">contrôle</button>
     </div>
   </header>
@@ -360,6 +443,12 @@ form.newdir textarea{min-height:64px}
         <textarea name="intent" placeholder="Ce que cet axe couvre, et pourquoi"></textarea>
         <button type="submit">Poser cette direction</button>
       </form>
+    </section>
+
+    <section class="pane" id="pane-cycle" hidden>
+      <p class="hint">Le cycle d'une génération. L'étape qui pulse est celle
+        en cours ; entre deux étapes, ce qui y meurt.</p>
+      <div class="flux" id="flux"></div>
     </section>
 
     <section class="pane" id="pane-ctl" hidden>
@@ -457,6 +546,7 @@ async function poll() {
     setGate(attente && attente.id === repondu ? null : attente);
     setHalt(s.paused, s.stopped);
     drawControl(s);
+    drawFlux(s);
     // En desktop la colonne est toujours ouverte, donc `openSheet` — qui
     // portait le rafraîchissement des listes — n'est plus jamais appelé.
     // On recharge quand un tour a bougé, pas à chaque poll.
@@ -587,6 +677,7 @@ async function drawBacklog() {
   box.innerHTML = "";
   let items = [];
   try { items = (await get("/backlog")).items || []; } catch (e) { }
+  nbIdees = items.length;          // avant le retour : zéro idée est une info
   if (!items.length) {
     box.appendChild(el("div", "empty", "Les agents n'ont encore rien proposé."));
     return;
