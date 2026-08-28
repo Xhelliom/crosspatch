@@ -29,15 +29,26 @@ STATES = ("submitted", "working", "input_required",
 NOM = "BACKLOG.yaml"
 
 
+def _nom(store) -> str:
+    """Un backlog par run. Au changement de run les workspaces repartent
+    neufs ; le backlog doit suivre, sinon le run suivant hérite des idées du
+    précédent, `known` n'est pas vide au premier tour et la boucle démarre
+    en fausse convergence. Les backlogs passés restent lisibles dans
+    l'archive, ce qu'un fichier écrasé ne permettait pas.
+    """
+    rid = getattr(store, "run_id", None)
+    return f"BACKLOG-{rid}.yaml" if rid else NOM
+
+
 def _lire(store) -> str:
     if hasattr(store, "document"):
-        return store.document(NOM) or ""
+        return store.document(_nom(store)) or ""
     return store.read_text() if store.exists() else ""
 
 
 def _ecrire(store, texte: str) -> None:
     if hasattr(store, "document"):
-        store.ecrire_document(NOM, texte)
+        store.ecrire_document(_nom(store), texte)
     else:
         store.write_text(texte)
 

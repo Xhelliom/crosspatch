@@ -220,6 +220,19 @@ def test_document_remplace_sans_doubler(adresse_archive):
     a.db.close()
 
 
+def test_le_backlog_est_propre_a_son_run(adresse_archive):
+    """Les workspaces repartent neufs quand le run change ; le backlog aussi,
+    sinon `known` n'est pas vide au premier tour et le run démarre en fausse
+    convergence."""
+    from orchestrator import backlog as bl
+    a = Archive(adresse_archive, run_id="R1")
+    b = Archive(adresse_archive, run_id="R2")
+    bl.save(a, [{"id": "IMP-001", "title": "idee du run 1", "state": "submitted"}])
+    assert bl.load(b) == []
+    assert [i["id"] for i in bl.load(a)] == ["IMP-001"]
+    a.db.close(); b.db.close()
+
+
 # --- plan de contrôle ------------------------------------------------------
 
 def test_control_ecrit_puis_relit(archive):

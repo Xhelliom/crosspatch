@@ -79,8 +79,7 @@ def test_verdict_ok_sur_gate_declenche_l_evaluation(loop, monkeypatch):
 def test_verdict_ok_sur_promote_integre(loop, monkeypatch):
     lo, L, root = loop
     gen_id = _gen(lo, status="awaiting_human", item_id="IMP-001")
-    lo.archive.ecrire_document("BACKLOG.yaml", yaml.safe_dump(
-        {"items": [{"id": "IMP-001", "title": "t", "state": "submitted"}]}))
+    L.bl.save(lo.archive, [{"id": "IMP-001", "title": "t", "state": "submitted"}])
     pousses = []
     monkeypatch.setattr(L.bl, "promote",
                         lambda r, g, branch: pousses.append((g, branch)))
@@ -89,20 +88,20 @@ def test_verdict_ok_sur_promote_integre(loop, monkeypatch):
     lo._drain_control()
     assert lo.archive.get(gen_id)["status"] == "completed"
     assert pousses == [(gen_id, f"evolution/{lo.run_id}")]
-    items = yaml.safe_load(lo.archive.document("BACKLOG.yaml"))["items"]
+    items = L.bl.load(lo.archive)
     assert items[0]["state"] == "completed"
 
 
 def test_verdict_negatif_rejette_et_ferme_l_item(loop):
     lo, _, root = loop
     gen_id = _gen(lo, status="awaiting_human", item_id="IMP-002")
-    lo.archive.ecrire_document("BACKLOG.yaml", yaml.safe_dump(
-        {"items": [{"id": "IMP-002", "title": "t", "state": "submitted"}]}))
+    from orchestrator import backlog as bl
+    bl.save(lo.archive, [{"id": "IMP-002", "title": "t", "state": "submitted"}])
     lo.archive.set_control(f"verdict:{gen_id}", "scope")
     lo._drain_control()
     assert lo.archive.get(gen_id)["status"] == "rejected"
     assert lo.archive.get(gen_id)["human_verdict"] == "scope"
-    items = yaml.safe_load(lo.archive.document("BACKLOG.yaml"))["items"]
+    items = bl.load(lo.archive)
     assert items[0]["state"] == "failed"
 
 

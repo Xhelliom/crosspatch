@@ -24,7 +24,10 @@ ROOT = Path(__file__).resolve().parents[1]
 cfg = yaml.safe_load((ROOT / "config.yaml").read_text())
 # CROSSPATCH_ARCHIVE permet de pointer une autre base sans toucher
 # config.yaml : indispensable pour tester, utile pour rejouer un run.
-archive = Archive(os.environ.get("CROSSPATCH_ARCHIVE") or cfg["archive_path"])
+# `run_id` : c'est lui qui désigne le backlog du run courant côté lecture,
+# comme il étiquette les dépenses côté worker.
+archive = Archive(os.environ.get("CROSSPATCH_ARCHIVE") or cfg["archive_path"],
+                  run_id=cfg["run_id"])
 app = FastAPI(title="crosspatch")
 
 # Pas de référence au worker : il tourne dans un autre conteneur et ne
