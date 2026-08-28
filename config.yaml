@@ -1,4 +1,4 @@
-run_id: "2026-08-25-005"   # tokens_per_task réellement mesuré : harness modifié
+run_id: "2026-08-28-006"   # backlog persistant : la déduplication a enfin une mémoire
 model: "mistralai/mistral-medium-3.1"   # milieu de gamme : le headroom est le sujet
 archive_path: "data/archive.db"
 sandbox_template: "base"
