@@ -61,7 +61,10 @@ header{
 .notch.dead{background:none;border:1px solid var(--edge);height:8px!important}
 .notch.wait{background:repeating-linear-gradient(45deg,var(--bone) 0 2px,transparent 2px 4px)}
 
-.readout{display:flex;gap:18px;margin-top:10px;font-size:11px}
+/* `wrap` : cinq colonnes ne tiennent pas sur 390 px, et sans lui les
+   trois dernières — acceptation, convergence, dépense — sortaient
+   simplement de l'écran. Elles passent à la ligne au lieu d'être coupées. */
+.readout{display:flex;flex-wrap:wrap;gap:10px 18px;margin-top:10px;font-size:11px}
 .readout div{display:flex;flex-direction:column;gap:1px}
 .readout span{color:var(--mute);letter-spacing:.06em;font-size:9px;text-transform:uppercase}
 .readout b{font-family:var(--display);font-weight:800;font-size:17px;letter-spacing:-.01em}

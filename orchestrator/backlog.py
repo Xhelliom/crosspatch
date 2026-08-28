@@ -272,19 +272,21 @@ def _rebaser_sur_le_distant(root: Path, branch: str) -> None:
     poussée est rejetée en `fetch first` — pour le reste du run, puisque
     rien ne se recolle tout seul.
 
-    `reset --soft` déplace HEAD sans rien changer aux fichiers : le commit
-    qui suit porte le contenu de /app et le distant pour parent. La
-    poussée redevient un fast-forward, quel que soit l'état du `.git`
-    local. Branche absente du distant (premier tour d'un run) : il n'y a
-    rien sur quoi se caler, on commite sur HEAD.
+    `reset` (mixed) déplace HEAD *et* l'index sur le distant, sans toucher
+    aux fichiers : ce qui n'est pas stagé ensuite garde donc la valeur du
+    distant. `--soft` laissait l'index sur l'arbre de l'ancien HEAD local —
+    celui de l'image — et le commit se mettait à annuler sur la branche
+    tout ce que le distant avait de plus que l'image, `kernel/` compris.
+
+    Branche absente du distant (premier tour d'un run) : il n'y a rien sur
+    quoi se caler, on commite sur HEAD.
     """
     env, cible = _acces_distant(root)
     p = subprocess.run(["git", "fetch", cible, f"refs/heads/{branch}"],
                        cwd=root, env=env, capture_output=True, text=True)
     if p.returncode:
         return
-    subprocess.run(["git", "reset", "--soft", "FETCH_HEAD"],
-                   cwd=root, check=True)
+    subprocess.run(["git", "reset", "FETCH_HEAD"], cwd=root, check=True)
 
 
 def _push(root: Path, branch: str) -> None:
