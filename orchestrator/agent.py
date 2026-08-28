@@ -16,6 +16,7 @@ import json
 import os
 import re
 import time
+import random
 from pathlib import Path
 
 import httpx
@@ -25,6 +26,7 @@ SYSTEM = "Tu écris du Python. Réponds avec un seul bloc de code, rien d'autre.
 
 MAX_RETRIES = 3
 RETRY_DELAY = 1
+
 
 def solve(prompt: str, workdir: Path) -> None:
     code, usage = _complete(f"{prompt}\n\nÉcris le module Python complet.")
@@ -58,7 +60,8 @@ def _complete(user: str) -> tuple[str, dict]:
         except httpx.HTTPError as e:
             if attempt == MAX_RETRIES - 1:
                 raise
-            time.sleep(RETRY_DELAY)
+            delay = RETRY_DELAY * (2 ** attempt) + random.uniform(0, 1)
+            time.sleep(delay)
 
 
 def _extract(text: str) -> str:

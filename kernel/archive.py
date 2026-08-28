@@ -352,19 +352,6 @@ class Archive:
         r = self.db.execute("SELECT COALESCE(SUM(usd),0) AS t FROM spend").fetchone()
         return r["t"]
 
-    def par_nature(self) -> dict[str, dict[str, float]]:
-        """Dépense ventilée par nature — `llm` d'un côté, `sandbox` de l'autre.
-
-        Le total seul ne dit pas où part l'argent. `n` compte les lignes de
-        facturation : pour `sandbox`, c'est le nombre de microVM E2B
-        démarrées, la seule mesure qu'on ait de ce que le soak consomme
-        réellement (`soak_runs` par génération évaluée).
-        """
-        return {r["kind"]: {"n": r["n"], "usd": round(r["usd"], 6)}
-                for r in self.db.execute(
-                    "SELECT kind, COUNT(*) AS n, COALESCE(SUM(usd),0) AS usd "
-                    "FROM spend GROUP BY kind")}
-
     # --- fil de discussion ----------------------------------------------
     def say(self, gen_id: int | None, actor: str, kind: str, body: str) -> None:
         self.db.execute(
