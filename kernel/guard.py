@@ -77,6 +77,16 @@ SUSPICIOUS = (
     # cet ancrage tout patch de `_complete` remonterait sur son contexte.
     (re.compile(r"^[+-].*\b(?:AGENT_)?MODEL\b", re.M),
      "touche au choix du modèle de l'agent"),
+    # Même famille que `MODEL`, en moins spectaculaire : régler la
+    # température, c'est régler le moteur d'inférence, pas améliorer
+    # l'agent. Passait en `low` sans revue — le motif `MODEL` est ancré sur
+    # `^[+-]` et la ligne `"model": MODEL` n'est pas touchée par un patch
+    # qui ne change que ce paramètre.
+    # Sans IGNORECASE et sans accent, délibérément : « température » en
+    # prose française ne déclenche pas, seul l'identifiant du code le fait.
+    # C'est la leçon de `BUDGET`, plus haut.
+    (re.compile(r"^[+-].*\btemperature\b", re.M),
+     "touche au réglage d'inférence (température)"),
 )
 
 

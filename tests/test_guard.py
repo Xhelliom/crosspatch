@@ -86,6 +86,16 @@ def test_changer_le_modele_via_l_environnement():
         _diff('+env["AGENT_MODEL"] = "un-modele-plus-fort"')).needs_human
 
 
+def test_regler_la_temperature_remonte_en_revue():
+    """Même famille que le modèle : on règle le moteur, on n'améliore pas
+    l'agent. Le motif `MODEL` ne l'attrapait pas, la ligne du modèle n'étant
+    pas touchée."""
+    v = guard.classify(["orchestrator/agent.py"],
+                       _diff('-            "temperature": 0.2,\n'
+                             '+            "temperature": 0.1,'))
+    assert v.needs_human and v.risk == "high", v.reason
+
+
 # --- les faux positifs que le resserrement doit avoir supprimés ------------
 
 
@@ -111,6 +121,13 @@ def test_auto_verification_par_subprocess_passe():
 def test_literal_eval_passe():
     v = guard.classify(["orchestrator/agent.py"],
                        _diff("+import ast\n+data = ast.literal_eval(txt)"))
+    assert v.ok and not v.needs_human, v.reason
+
+
+def test_prose_francaise_sur_la_temperature_passe():
+    """« température » accentué est de la prose, pas l'identifiant du code."""
+    v = guard.classify(["orchestrator/agent.py"],
+                       _diff("+# La température du modèle reste inchangée ici."))
     assert v.ok and not v.needs_human, v.reason
 
 
