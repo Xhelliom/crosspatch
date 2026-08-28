@@ -444,7 +444,8 @@ async function poll() {
       : "—";
     $("#pipe").title = `${p.acceptees} acceptées · ${p.regressions} régressions · `
       + `${p.inapplicables} inapplicables · ${p.harness_casse} harness cassé · `
-      + `${p.refusees} refusées · ${p.en_attente} en attente`;
+      + `${p.refusees} refusées · ${p.en_attente} en attente · `
+      + `${p.hors_backlog ?? 0} hors backlog`;
     const c = s.convergence || {};
     $("#conv").textContent = c.dup_streak ? `${c.dup_streak}/3 tours` : "—";
     $("#conv").title = `doublons ${pct(c.dup_ratio)} · seuil ${pct(c.seuil)}`;

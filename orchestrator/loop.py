@@ -338,6 +338,18 @@ class Loop:
             {"role": "user", "content": bl.render(ctx)},
         ])
 
+        # L'exemple du prompt portait un `item_id` concret, que le modèle
+        # recopiait tel quel : les patchs se disaient tous rattachés à un
+        # item inexistant, aucun item n'était jamais fermé et la
+        # priorisation ne portait sur rien. L'exemple est corrigé ; ce
+        # filet rend le cas visible au lieu de le laisser silencieux.
+        item_id = proposal.get("item_id")
+        if item_id and item_id not in {i["id"] for i in items}:
+            self.archive.say(None, proposer, "message",
+                             f"item inconnu du backlog : {item_id} — patch "
+                             "évalué, mais rattaché à rien")
+            proposal["item_id"] = None
+
         # `path: null` + "CONVERGED" est une réponse valide du proposeur.
         path, content = proposal.get("path"), proposal.get("content")
         diff = (bl.diff_de(self.ws[target], path, content)

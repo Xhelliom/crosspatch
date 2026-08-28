@@ -39,7 +39,7 @@ JSON strict, rien d'autre :
 
 ```json
 {
-  "item_id": "IMP-042",
+  "item_id": "l'identifiant exact d'un item du backlog ci-dessus, recopié tel quel",
   "rationale": "2 à 4 phrases : le problème observé, le changement, l'effet attendu et sur quelle métrique.",
   "path": "orchestrator/agent.py",
   "content": "le contenu complet du fichier après modification",
@@ -52,3 +52,7 @@ JSON strict, rien d'autre :
 `path` est une clé de `target_files`, `content` le fichier entier — pas un
 extrait, pas un diff, pas d'élision « … le reste inchangé ». Le diff est
 calculé pour toi à partir de ces deux champs.
+
+`item_id` doit exister dans le backlog qui t'est fourni. Un identifiant
+inventé casse le lien entre l'idée et le patch : l'item reste ouvert pour
+toujours et la priorisation ne veut plus rien dire.

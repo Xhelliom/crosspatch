@@ -262,7 +262,7 @@ class Archive:
         change complètement ce qu'il faut réparer.
         """
         rows = self.db.execute(
-            "SELECT status, note FROM generations "
+            "SELECT status, note, item_id FROM generations "
             "WHERE run_id=? AND role_proposer IN ('A','B')",
             (run_id,),
         ).fetchall()
@@ -277,6 +277,10 @@ class Archive:
             "regressions": compte(lambda s, n: n == "régression"),
             "refusees": compte(lambda s, n: s == "rejected"),
             "acceptees": compte(lambda s, n: s == "completed"),
+            # Un patch qui ne se rattache à aucune idée du backlog : la
+            # boucle idéation → implémentation est rompue au milieu, et
+            # rien d'autre ne le dirait.
+            "hors_backlog": sum(1 for r in rows if r["item_id"] is None),
             "en_attente": compte(lambda s, n: s.startswith("awaiting")),
         }
 

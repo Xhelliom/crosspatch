@@ -117,6 +117,17 @@ def test_awaiting_couvre_les_deux_gates(archive):
     assert [r["id"] for r in archive.awaiting("R")] == [g1, g2]
 
 
+def test_pipeline_compte_les_patchs_hors_backlog(archive):
+    """Un patch rattaché à aucune idée : la boucle idéation → implémentation
+    est rompue au milieu, et seul ce compteur le dit."""
+    _gen(archive, role_proposer="A", status="completed", item_id="IMP-001")
+    _gen(archive, role_proposer="B", status="completed", item_id=None)
+    _gen(archive, role_proposer="baseline", status="completed", item_id=None)
+    p = archive.pipeline("R")
+    assert p["proposees"] == 2          # la référence n'est pas une proposition
+    assert p["hors_backlog"] == 1
+
+
 def test_acceptance_rate(archive):
     _gen(archive, status="completed")
     _gen(archive, status="failed")
@@ -329,4 +340,4 @@ def test_pipeline_dit_ou_meurent_les_propositions(archive):
 
     assert p == {"proposees": 6, "inapplicables": 1, "harness_casse": 1,
                  "regressions": 1, "refusees": 1, "acceptees": 1,
-                 "en_attente": 1}
+                 "en_attente": 1, "hors_backlog": 6}
