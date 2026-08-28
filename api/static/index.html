@@ -64,6 +64,24 @@ header{
 /* `wrap` : cinq colonnes ne tiennent pas sur 390 px, et sans lui les
    trois dernières — acceptation, convergence, dépense — sortaient
    simplement de l'écran. Elles passent à la ligne au lieu d'être coupées. */
+/* Le rail n'avait pour toute explication qu'un `title` — donc un survol,
+   donc rien sur un téléphone. Cinq formes qui ne se distinguent que par
+   une nuance ne veulent rien dire sans clé de lecture. */
+.raillegend{
+  display:flex;flex-wrap:wrap;align-items:center;gap:3px 10px;
+  margin-top:7px;font-size:9px;color:var(--mute);letter-spacing:.06em;
+  text-transform:uppercase;
+}
+.raillegend i{
+  display:inline-block;width:7px;height:7px;border-radius:1px;
+  margin-right:4px;vertical-align:-1px;
+}
+.raillegend .a{background:var(--a)} .raillegend .b{background:var(--b)}
+.raillegend .ref{background:var(--mute)}
+.raillegend .wait{background:repeating-linear-gradient(45deg,var(--bone) 0 2px,transparent 2px 4px)}
+.raillegend .dead{border:1px solid var(--edge)}
+.raillegend em{font-style:normal;text-transform:none;letter-spacing:0}
+
 .readout{display:flex;flex-wrap:wrap;gap:10px 18px;margin-top:10px;font-size:11px}
 .readout div{display:flex;flex-direction:column;gap:1px}
 .readout span{color:var(--mute);letter-spacing:.06em;font-size:9px;text-transform:uppercase}
@@ -266,6 +284,14 @@ form.newdir textarea{min-height:64px}
     En pause — aucun appel de modèle, aucun sandbox. La dépense est gelée.
   </div>
   <div class="rail" id="rail"></div>
+  <div class="raillegend">
+    <span><i class="a"></i>A</span>
+    <span><i class="b"></i>B</span>
+    <span><i class="ref"></i>réf.</span>
+    <span><i class="wait"></i>en attente</span>
+    <span><i class="dead"></i>échec</span>
+    <em>hauteur = réussite</em>
+  </div>
   <div class="readout">
     <!-- « réussite » seule ne disait rien : 0.667 est-il un gain ou le
          niveau de départ ? On montre les deux, et l'écart. -->
