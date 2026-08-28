@@ -1,15 +1,3 @@
-"""
-L'agent évalué par le harness. C'est **ce fichier** que A et B se réécrivent
-mutuellement — le reste de `orchestrator/` n'est que la machinerie autour.
-
-Il est volontairement naïf : un seul appel, pas de relecture des tests, pas de
-retry, pas de mémoire des échecs. C'est le headroom. Si tu l'améliores toi-même
-à la main, tu retires à l'expérience ce qu'elle est censée découvrir.
-
-Contrat attendu par le harness :
-    solve(prompt: str, workdir: Path) -> None
-        écrit une solution dans workdir/solution.py
-"""
 from __future__ import annotations
 
 import json
@@ -25,12 +13,13 @@ SYSTEM = "Tu écris du Python. Réponds avec un seul bloc de code, rien d'autre.
 
 def solve(prompt: str, workdir: Path) -> None:
     code, usage = _complete(f"{prompt}\n\nÉcris le module Python complet.")
-    (workdir / "solution.py").write_text(_extract(code))
-    # Le harness ne voit pas les appels réseau de l'agent : sans ce report,
-    # `tokens_per_task` restait à 0.0 et les agents proposaient d'optimiser
-    # un chiffre qui n'avait jamais été mesuré. C'est de l'instrumentation,
-    # pas une aide à résoudre — garde-la si tu réécris ce fichier.
-    (workdir / "usage.json").write_text(json.dumps(usage))
+    if code is not None and code.strip() != "":
+        (workdir / "solution.py").write_text(_extract(code))
+        # Le harness ne voit pas les appels réseau de l'agent : sans ce report,
+        # `tokens_per_task` restait à 0.0 et les agents proposaient d'optimiser
+        # un chiffre qui n'avait jamais été mesuré. C'est de l'instrumentation,
+        # pas une aide à résoudre — garde-la si tu réécris ce fichier.
+        (workdir / "usage.json").write_text(json.dumps(usage))
 
 
 def _complete(user: str) -> tuple[str, dict]:
