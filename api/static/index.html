@@ -176,55 +176,6 @@ button.go:hover{background:rgba(88,191,166,.1)}
 .empty b{display:block;color:var(--bone);font-family:var(--display);
   font-weight:500;font-size:15px;margin-bottom:6px}
 
-/* ---- le cycle d'une génération ----
-   Les compteurs viennent tous de `pipeline`, déjà dans /state : ils étaient
-   écrasés dans une infobulle qu'on ne peut pas survoler sur un téléphone. */
-let nbIdees = null;   // rempli par drawBacklog, qui charge déjà /backlog
-
-// [étape, valeur, ce qui meurt juste après]
-const ETAPES = (p, n) => [
-  ["idéation",    n ?? "—",                "hors backlog", p.hors_backlog],
-  ["proposition", p.proposees ?? 0,        "inapplicables", p.inapplicables],
-  ["sandbox ×3",  p.proposees - (p.inapplicables || 0), "harness cassé", p.harness_casse],
-  ["score",       null,                    "régressions", p.regressions],
-  ["verdict",     p.en_attente ?? 0,       "refusées", p.refusees],
-  ["intégration", p.acceptees ?? 0,        null, 0],
-];
-
-// Quelle étape pulse, selon la phase que le worker écrit dans `control`.
-function etapeActive(phase) {
-  const f = String(phase || "");
-  if (f.startsWith("idéation")) return 0;
-  if (f.startsWith("proposition")) return 1;
-  if (f.startsWith("soak") || f.startsWith("évaluation")
-      || f.startsWith("mesure")) return 2;
-  if (f.startsWith("attente")) return 4;
-  return -1;                       // en pause, arrêté : rien ne travaille
-}
-
-function drawFlux(s) {
-  const box = $("#flux");
-  const p = s.pipeline || {};
-  const actif = etapeActive(s.phase);
-  box.innerHTML = "";
-  ETAPES(p, nbIdees).forEach(([nom, val, perte, n], i) => {
-    const e = el("div", "etape" + (i === actif ? " on" : ""));
-    e.appendChild(el("span", "nom", nom));
-    if (val !== null && val !== undefined) e.appendChild(el("b", "val", String(val)));
-    box.appendChild(e);
-    if (perte === null) return;
-    box.appendChild(el("div", "lien"));
-    const d = el("div", "perte" + (n ? "" : " rien"));
-    d.innerHTML = `↳ <b>${n || 0}</b> ${perte}`;
-    box.appendChild(d);
-    box.appendChild(el("div", "lien"));
-  });
-  const etat = el("div", "hint");
-  etat.style.marginTop = "12px";
-  etat.textContent = "phase : " + (s.phase || "—");
-  box.appendChild(etat);
-}
-
 /* ---- coupe-circuit ---- */
 /* L'identité sur deux lignes : à 390 px, le titre, l'identifiant de run et
    les deux boutons ne tiennent pas côte à côte, et c'est le bouton qui
@@ -580,6 +531,55 @@ function drawRail(recent, reference) {
     rail.appendChild(n);
   });
   rail.scrollLeft = rail.scrollWidth;
+}
+
+/* ---- le cycle d'une génération ----
+   Les compteurs viennent tous de `pipeline`, déjà dans /state : ils étaient
+   écrasés dans une infobulle qu'on ne peut pas survoler sur un téléphone. */
+let nbIdees = null;   // rempli par drawBacklog, qui charge déjà /backlog
+
+// [étape, valeur, ce qui meurt juste après]
+const ETAPES = (p, n) => [
+  ["idéation",    n ?? "—",                "hors backlog", p.hors_backlog],
+  ["proposition", p.proposees ?? 0,        "inapplicables", p.inapplicables],
+  ["sandbox ×3",  p.proposees - (p.inapplicables || 0), "harness cassé", p.harness_casse],
+  ["score",       null,                    "régressions", p.regressions],
+  ["verdict",     p.en_attente ?? 0,       "refusées", p.refusees],
+  ["intégration", p.acceptees ?? 0,        null, 0],
+];
+
+// Quelle étape pulse, selon la phase que le worker écrit dans `control`.
+function etapeActive(phase) {
+  const f = String(phase || "");
+  if (f.startsWith("idéation")) return 0;
+  if (f.startsWith("proposition")) return 1;
+  if (f.startsWith("soak") || f.startsWith("évaluation")
+      || f.startsWith("mesure")) return 2;
+  if (f.startsWith("attente")) return 4;
+  return -1;                       // en pause, arrêté : rien ne travaille
+}
+
+function drawFlux(s) {
+  const box = $("#flux");
+  const p = s.pipeline || {};
+  const actif = etapeActive(s.phase);
+  box.innerHTML = "";
+  ETAPES(p, nbIdees).forEach(([nom, val, perte, n], i) => {
+    const e = el("div", "etape" + (i === actif ? " on" : ""));
+    e.appendChild(el("span", "nom", nom));
+    if (val !== null && val !== undefined) e.appendChild(el("b", "val", String(val)));
+    box.appendChild(e);
+    if (perte === null) return;
+    box.appendChild(el("div", "lien"));
+    const d = el("div", "perte" + (n ? "" : " rien"));
+    d.innerHTML = `↳ <b>${n || 0}</b> ${perte}`;
+    box.appendChild(d);
+    box.appendChild(el("div", "lien"));
+  });
+  const etat = el("div", "hint");
+  etat.style.marginTop = "12px";
+  etat.textContent = "phase : " + (s.phase || "—");
+  box.appendChild(etat);
 }
 
 /* ---- coupe-circuit ----
