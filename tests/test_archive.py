@@ -197,6 +197,29 @@ def test_par_nature_filtre_sur_le_run(adresse_archive):
     a.db.close(); b.db.close()
 
 
+# --- documents partagés ----------------------------------------------------
+
+def test_document_absent_vaut_none(archive):
+    assert archive.document("BACKLOG.yaml") is None
+
+
+def test_document_ecrit_puis_relu(archive):
+    archive.ecrire_document("BACKLOG.yaml", "items: []\n")
+    assert archive.document("BACKLOG.yaml") == "items: []\n"
+
+
+def test_document_remplace_sans_doubler(adresse_archive):
+    """L'API et le worker lisent le même document : une écriture remplace,
+    elle n'empile pas une seconde ligne que la lecture tirerait au hasard."""
+    a = Archive(adresse_archive)
+    a.ecrire_document("BACKLOG.yaml", "un")
+    a.ecrire_document("BACKLOG.yaml", "deux")
+    assert a.document("BACKLOG.yaml") == "deux"
+    n = a.db.execute("SELECT COUNT(*) AS n FROM documents").fetchone()["n"]
+    assert n == 1
+    a.db.close()
+
+
 # --- plan de contrôle ------------------------------------------------------
 
 def test_control_ecrit_puis_relit(archive):

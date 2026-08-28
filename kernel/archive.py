@@ -45,6 +45,11 @@ CREATE TABLE IF NOT EXISTS spend (
   usd      @REAL@ NOT NULL,
   at       @REAL@ NOT NULL
 );
+CREATE TABLE IF NOT EXISTS documents (
+  nom     TEXT PRIMARY KEY,          -- 'BACKLOG.yaml'
+  contenu TEXT NOT NULL,
+  at      @REAL@ NOT NULL
+);
 CREATE TABLE IF NOT EXISTS control (
   key   TEXT PRIMARY KEY,        -- paused | stop | verdict:<gen> | rollback:<gen>
   value TEXT NOT NULL,
@@ -383,6 +388,31 @@ class Archive:
                 for r in self.db.execute(
                     "SELECT kind, COUNT(*) AS n, COALESCE(SUM(usd),0) AS usd "
                     f"FROM spend {where} GROUP BY kind", params)}
+
+    # --- documents partagés ----------------------------------------------
+    def document(self, nom: str) -> str | None:
+        """Un document que l'API et le worker doivent voir identique.
+
+        Le backlog vivait dans un fichier de `/app`. Or l'API et le worker
+        sont deux conteneurs : chacun lisait le sien, celui de son image, et
+        `/backlog` n'a jamais montré ce que les agents écrivaient. Le fichier
+        ne survivait pas non plus à un `docker build`. L'archive est le seul
+        canal partagé — et en cluster le seul possible, deux pods ne
+        partageant pas un PVC de façon fiable.
+        """
+        r = self.db.execute("SELECT contenu FROM documents WHERE nom=?",
+                            (nom,)).fetchone()
+        return r["contenu"] if r else None
+
+    def ecrire_document(self, nom: str, contenu: str) -> None:
+        # Pas d'UPSERT : la syntaxe diverge entre les deux dialectes, et le
+        # volume ne justifie pas de la faire traduire par `_pour_postgres`.
+        self.db.execute("DELETE FROM documents WHERE nom=?", (nom,))
+        self.db.execute(
+            "INSERT INTO documents (nom,contenu,at) VALUES (?,?,?)",
+            (nom, contenu, time.time()),
+        )
+        self.db.commit()
 
     # --- fil de discussion ----------------------------------------------
     def say(self, gen_id: int | None, actor: str, kind: str, body: str) -> None:

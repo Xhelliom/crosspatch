@@ -46,13 +46,34 @@ header{
   overflow:hidden;text-overflow:ellipsis}
 
 /* chaque génération = une encoche. hauteur = pass_rate, couleur = proposeur */
+.railwrap{position:relative}
+/* La barre de référence. Sans elle, cinq encoches à 0.667 font cinq
+   bâtons rigoureusement identiques : l'œil ne peut pas distinguer « ça
+   plafonne » de « ça progresse ». Avec, la lecture est immédiate — tout
+   ce qui dépasse le trait est un gain, tout ce qui l'affleure est plat. */
+.railref{
+  position:absolute;left:0;right:0;z-index:1;pointer-events:none;
+  border-top:1px dashed var(--mute);opacity:.55;
+}
+.railref b{
+  position:absolute;right:0;top:-13px;font-size:9px;font-weight:500;
+  color:var(--mute);letter-spacing:.06em;background:var(--ground);
+  padding-left:5px;
+}
 .rail{
   display:flex;align-items:flex-end;gap:3px;height:44px;
   border-bottom:1px solid var(--edge);overflow-x:auto;
   scrollbar-width:none;padding-bottom:1px;
 }
 .rail::-webkit-scrollbar{display:none}
-.notch{flex:0 0 7px;border-radius:1px 1px 0 0;min-height:2px;transition:height .3s}
+/* `flex:1` : à cinq générations, sept pixels de barre dans toute la
+   largeur du bandeau se lisaient comme de la poussière. Les encoches
+   s'élargissent tant qu'il y a la place, et retombent à 7 px quand la
+   lignée s'allonge. */
+.notch{
+  flex:1 1 7px;min-width:7px;max-width:26px;
+  border-radius:1px 1px 0 0;min-height:2px;transition:height .3s;
+}
 .notch.A{background:var(--a)} .notch.B{background:var(--b)}
 /* La mesure de référence n'est ni A ni B : sans règle, elle n'avait aucun
    fond et disparaissait du rail — le plancher des deltas était le seul
@@ -283,7 +304,10 @@ form.newdir textarea{min-height:64px}
   <div class="paused-note" id="pausednote" hidden>
     En pause — aucun appel de modèle, aucun sandbox. La dépense est gelée.
   </div>
-  <div class="rail" id="rail"></div>
+  <div class="railwrap">
+    <div class="railref" id="railref" hidden><b>réf.</b></div>
+    <div class="rail" id="rail"></div>
+  </div>
   <div class="raillegend">
     <span><i class="a"></i>A</span>
     <span><i class="b"></i>B</span>
@@ -427,7 +451,7 @@ async function poll() {
     $("#accept").textContent = pct(s.acceptance_rate?.overall);
     $("#spend").textContent = "$" + s.spent_usd.toFixed(2);
     $("#spendbox").classList.toggle("hot", s.spent_usd > s.max_usd * 0.8);
-    drawRail(s.recent);
+    drawRail(s.recent, s.reussite?.reference);
     const attente = s.awaiting_human[0] || null;
     setGate(attente && attente.id === repondu ? null : attente);
     setHalt(s.paused, s.stopped);
@@ -442,7 +466,12 @@ async function poll() {
   } catch (e) { /* le worker peut être à l'arrêt : on réessaie */ }
 }
 
-function drawRail(recent) {
+function drawRail(recent, reference) {
+  // Même échelle que les encoches (`p * 42`), plus le padding-bas du rail.
+  const ref = $("#railref");
+  ref.hidden = !reference;
+  if (reference) ref.style.bottom = (reference * 42 + 1) + "px";
+
   const rail = $("#rail");
   rail.innerHTML = "";
   [...recent].reverse().forEach(g => {

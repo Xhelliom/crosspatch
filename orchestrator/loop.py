@@ -33,7 +33,6 @@ from orchestrator.sandbox import Runner
 
 ROOT = Path(__file__).resolve().parents[1]
 PROMPTS = ROOT / "orchestrator" / "prompts"
-BACKLOG = ROOT / "mission" / "BACKLOG.yaml"
 DIRS = ROOT / "mission" / "DIRECTIONS.yaml"
 
 IDLE = 2.0        # seconde(s) entre deux relectures du plan de contrôle
@@ -270,7 +269,7 @@ class Loop:
             "failures": self.last_failures,
             "metrics": {**scores,
                         "acceptance_rate": self.archive.acceptance_rate(self.run_id)},
-            "backlog": [bl.brief(i) for i in bl.load(BACKLOG)],
+            "backlog": [bl.brief(i) for i in bl.load(self.archive)],
             "rejected": [
                 {"note": r["note"], "verdict": r["human_verdict"]}
                 for r in self.archive.failures(self.run_id)
@@ -284,7 +283,7 @@ class Loop:
         ])
 
         fresh, dupes, orphans = bl.ingest(
-            BACKLOG, out.get("items") or [], proposer, None,
+            self.archive, out.get("items") or [], proposer, None,
             valid_dirs={d["id"] for d in live_dirs})
 
         for nd in out.get("new_directions", []):
@@ -321,7 +320,7 @@ class Loop:
     # ----------------------------------------------------------------- tour
     def _turn(self, proposer: str, target: str) -> None:
         """proposer lit le code de target et propose un patch. Jamais le sien."""
-        items = bl.load(BACKLOG)
+        items = bl.load(self.archive)
         ranked = bl.rank(items)
 
         ctx = {
@@ -458,7 +457,7 @@ class Loop:
         if verdict != "ok":
             self.archive.update(gen_id, status="rejected")
             if item_id:
-                bl.close(BACKLOG, item_id, "failed")
+                bl.close(self.archive, item_id, "failed")
             return
 
         if row["status"] == "awaiting_gate":
@@ -470,7 +469,7 @@ class Loop:
 
         self.archive.update(gen_id, status="completed")
         if item_id:
-            bl.close(BACKLOG, item_id, "completed")
+            bl.close(self.archive, item_id, "completed")
         # La promotion réelle = commit + push. Le redéploiement recharge
         # le code. On ne patche jamais le processus vivant.
         target = "B" if row["role_proposer"] == "A" else "A"

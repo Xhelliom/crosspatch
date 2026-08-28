@@ -13,7 +13,7 @@ import os
 import pytest
 
 DSN = os.environ.get("CROSSPATCH_TEST_PG")
-TABLES = ("events", "spend", "control", "generations")
+TABLES = ("events", "spend", "control", "documents", "generations")
 
 
 def _nettoyer(dsn: str) -> None:

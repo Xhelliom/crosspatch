@@ -33,7 +33,8 @@ def loop(adresse_archive, tmp_path, monkeypatch):
 
     import orchestrator.loop as L
     monkeypatch.setattr(L, "ROOT", root)
-    monkeypatch.setattr(L, "BACKLOG", root / "mission" / "BACKLOG.yaml")
+    # Plus de `BACKLOG` à détourner : le backlog vit dans l'archive, et
+    # `CROSSPATCH_ARCHIVE` pointe déjà sur celle du test.
     monkeypatch.setattr(L, "DIRS", root / "mission" / "DIRECTIONS.yaml")
 
     cfg = yaml.safe_load((root / "config.yaml").read_text())
@@ -78,7 +79,7 @@ def test_verdict_ok_sur_gate_declenche_l_evaluation(loop, monkeypatch):
 def test_verdict_ok_sur_promote_integre(loop, monkeypatch):
     lo, L, root = loop
     gen_id = _gen(lo, status="awaiting_human", item_id="IMP-001")
-    (root / "mission" / "BACKLOG.yaml").write_text(yaml.safe_dump(
+    lo.archive.ecrire_document("BACKLOG.yaml", yaml.safe_dump(
         {"items": [{"id": "IMP-001", "title": "t", "state": "submitted"}]}))
     pousses = []
     monkeypatch.setattr(L.bl, "promote",
@@ -88,20 +89,20 @@ def test_verdict_ok_sur_promote_integre(loop, monkeypatch):
     lo._drain_control()
     assert lo.archive.get(gen_id)["status"] == "completed"
     assert pousses == [(gen_id, f"evolution/{lo.run_id}")]
-    items = yaml.safe_load((root / "mission" / "BACKLOG.yaml").read_text())["items"]
+    items = yaml.safe_load(lo.archive.document("BACKLOG.yaml"))["items"]
     assert items[0]["state"] == "completed"
 
 
 def test_verdict_negatif_rejette_et_ferme_l_item(loop):
     lo, _, root = loop
     gen_id = _gen(lo, status="awaiting_human", item_id="IMP-002")
-    (root / "mission" / "BACKLOG.yaml").write_text(yaml.safe_dump(
+    lo.archive.ecrire_document("BACKLOG.yaml", yaml.safe_dump(
         {"items": [{"id": "IMP-002", "title": "t", "state": "submitted"}]}))
     lo.archive.set_control(f"verdict:{gen_id}", "scope")
     lo._drain_control()
     assert lo.archive.get(gen_id)["status"] == "rejected"
     assert lo.archive.get(gen_id)["human_verdict"] == "scope"
-    items = yaml.safe_load((root / "mission" / "BACKLOG.yaml").read_text())["items"]
+    items = yaml.safe_load(lo.archive.document("BACKLOG.yaml"))["items"]
     assert items[0]["state"] == "failed"
 
 

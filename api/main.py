@@ -17,6 +17,7 @@ from fastapi import Depends, FastAPI, Header, HTTPException
 from fastapi.responses import FileResponse, StreamingResponse
 
 from kernel.archive import Archive
+from orchestrator import backlog as bl
 from orchestrator import directions as dr
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -109,7 +110,10 @@ def state() -> dict:
 
 @app.get("/backlog", dependencies=[Depends(auth)])
 def backlog() -> dict:
-    return yaml.safe_load((ROOT / "mission" / "BACKLOG.yaml").read_text())
+    # Depuis l'archive, pas depuis un fichier : l'API et le worker sont deux
+    # conteneurs, et chacun lisait jusqu'ici sa propre copie — celle de son
+    # image, que le worker n'écrit jamais.
+    return {"items": bl.load(archive)}
 
 
 DIRS = ROOT / "mission" / "DIRECTIONS.yaml"

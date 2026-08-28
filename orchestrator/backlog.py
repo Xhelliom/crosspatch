@@ -22,15 +22,36 @@ STATES = ("submitted", "working", "input_required",
           "completed", "failed", "canceled")
 
 
-def load(path: Path) -> list[dict]:
-    if not path.exists():
+# Le backlog est un état *partagé* : le worker l'écrit, l'API le sert. Un
+# fichier de `/app` ne pouvait tenir ce rôle — deux conteneurs, deux copies,
+# et rien qui survive à un `docker build`. `store` est donc l'archive en
+# service, et reste un `Path` dans les tests et pour un usage hors ligne.
+NOM = "BACKLOG.yaml"
+
+
+def _lire(store) -> str:
+    if hasattr(store, "document"):
+        return store.document(NOM) or ""
+    return store.read_text() if store.exists() else ""
+
+
+def _ecrire(store, texte: str) -> None:
+    if hasattr(store, "document"):
+        store.ecrire_document(NOM, texte)
+    else:
+        store.write_text(texte)
+
+
+def load(store) -> list[dict]:
+    texte = _lire(store)
+    if not texte.strip():
         return []
-    return yaml.safe_load(path.read_text())["items"]
+    return yaml.safe_load(texte)["items"] or []
 
 
-def save(path: Path, items: list[dict]) -> None:
-    path.write_text(yaml.safe_dump({"items": items}, sort_keys=False,
-                                   allow_unicode=True))
+def save(store, items: list[dict]) -> None:
+    _ecrire(store, yaml.safe_dump({"items": items}, sort_keys=False,
+                                  allow_unicode=True))
 
 
 def _key(title: str) -> str:
@@ -39,7 +60,7 @@ def _key(title: str) -> str:
     return " ".join(sorted(set(words))[:6])
 
 
-def ingest(path: Path, raw_items: list[dict], author: str,
+def ingest(store, raw_items: list[dict], author: str,
            gen_id: int | None, valid_dirs: set[str] | None = None,
            cap: int = 40) -> tuple[list[dict], int, int]:
     """Fusionne les idées produites en phase d'idéation.
@@ -50,7 +71,7 @@ def ingest(path: Path, raw_items: list[dict], author: str,
     Une tâche sans direction active est écartée : c'est l'humain qui ouvre les
     terrains, l'IA qui les explore.
     """
-    items = load(path)
+    items = load(store)
     known = {_key(i["title"]) for i in items}
     seq = max((int(i["id"].split("-")[1]) for i in items), default=0)
     fresh, dupes, orphans = [], 0, 0
@@ -86,16 +107,16 @@ def ingest(path: Path, raw_items: list[dict], author: str,
     live = [i for i in items if i["state"] not in ("completed", "canceled")]
     if len(live) > cap:
         live = rank(live)[:cap]
-    save(path, live + [i for i in items if i["state"] == "completed"])
+    save(store, live + [i for i in items if i["state"] == "completed"])
     return fresh, dupes, orphans
 
 
-def close(path: Path, item_id: str, state: str) -> None:
-    items = load(path)
+def close(store, item_id: str, state: str) -> None:
+    items = load(store)
     for i in items:
         if i["id"] == item_id:
             i["state"] = state
-    save(path, items)
+    save(store, items)
 
 
 def rank(items: list[dict]) -> list[dict]:
@@ -316,12 +337,12 @@ def promote(root: Path, gen_id: int, branch: str = "evolution/main") -> None:
     # `add -A` attribuait à la génération tout ce qui avait bougé dans /app
     # — y compris le code livré par un rebuild d'image. Le commit « gen 33 »
     # se retrouvait à contenir des correctifs humains sur `kernel/`. On ne
-    # prend que ce qu'un patch a le droit de toucher, plus le backlog que
-    # les agents tiennent.
+    # prend que ce qu'un patch a le droit de toucher. Le backlog n'en est
+    # plus : il vit dans l'archive, seul canal que l'API et le worker
+    # partagent.
     # `git add` échoue sur un chemin absent : un dépôt n'a pas forcément
     # les trois zones mutables (ni de backlog au premier tour).
-    vises = [c for c in (*MUTABLE_DIRS, "mission/BACKLOG.yaml")
-             if (root / c).exists()]
+    vises = [c for c in MUTABLE_DIRS if (root / c).exists()]
     if vises:
         subprocess.run(["git", "add", "--", *vises], cwd=root, check=True)
     subprocess.run([*_git(), "commit", "-m", f"gen {gen_id} (validée)"],
@@ -347,12 +368,16 @@ def rollback(root: Path, gen_id: int, branch: str = "evolution/main") -> str:
     L'historique reste vrai : on voit qu'une génération a été intégrée puis
     annulée, ce qui est précisément ce qu'on veut pouvoir relire.
     """
-    # ponytail: `find_commit` ne lit que l'historique local. Juste après un
-    # `docker build`, celui-ci est reparti de l'état du dépôt hôte et la
-    # génération visée est introuvable — l'appel échoue proprement plutôt
-    # que d'annuler autre chose. La première promotion recolle l'historique
-    # sur le distant (`_rebaser_sur_le_distant`) et le rollback remarche.
-    # Si ça devient gênant : fetch puis revert sur un clone jetable.
+    # ponytail: `find_commit` ne lit que l'historique local, et `.git` vit
+    # dans l'image — pas dans un volume, parce qu'un `subPath` vide n'est
+    # pas amorcé en Kubernetes comme un volume nommé l'est en Docker, et
+    # que la divergence local/cluster coûterait plus que ce trou. Juste
+    # après un redéploiement, la génération visée est donc introuvable et
+    # l'appel échoue proprement plutôt que d'annuler autre chose ; la
+    # première promotion recolle l'historique (`_rebaser_sur_le_distant`)
+    # et le rollback remarche. Si ça devient gênant : fetch, puis patch
+    # inverse (`git show <sha> | git apply -R`), qui n'exige pas l'arbre
+    # propre que `git revert` réclame.
     sha = find_commit(root, gen_id)
     if sha is None:
         raise LookupError(f"aucun commit trouvé pour la génération {gen_id}")
