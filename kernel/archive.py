@@ -225,9 +225,19 @@ class Archive:
         ).fetchall()
 
     def best(self, run_id: str) -> sqlite3.Row | None:
+        """Le meilleur score du run — un patch réel plutôt que la référence
+        quand ils sont à égalité.
+
+        Sans départage, un run où rien ne progresse renvoyait la baseline,
+        et l'UI affichait « — » au lieu de « 0.667 depuis 0.667 » : elle
+        perdait la mesure au moment précis où elle dit quelque chose, à
+        savoir que ça plafonne. À égalité, le patch le plus récent gagne.
+        """
         return self.db.execute(
             "SELECT * FROM generations WHERE run_id=? AND status='completed' "
-            "ORDER BY json_extract(scores,'$.pass_rate') DESC LIMIT 1",
+            "ORDER BY json_extract(scores,'$.pass_rate') DESC, "
+            "CASE WHEN role_proposer='baseline' THEN 1 ELSE 0 END ASC, "
+            "id DESC LIMIT 1",
             (run_id,),
         ).fetchone()
 

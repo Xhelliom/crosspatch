@@ -68,6 +68,17 @@ def test_best_trie_sur_le_pass_rate_dans_le_json(archive):
     assert archive.best("R")["id"] == fort
 
 
+def test_best_prefere_un_patch_a_la_reference_a_egalite(archive):
+    """Un run qui plafonne doit tout de même montrer sa mesure : à score
+    égal, `best` renvoie le patch, pas la baseline."""
+    _gen(archive, role_proposer="baseline", status="completed",
+         scores={"pass_rate": 0.667})
+    g = _gen(archive, role_proposer="A", status="completed",
+             scores={"pass_rate": 0.667})
+    assert archive.best("R")["id"] == g
+    assert archive.best("R")["role_proposer"] == "A"
+
+
 def test_best_ignore_les_non_completes(archive):
     g = _gen(archive, status="awaiting_human")
     archive.update(g, scores={"pass_rate": 1.0})
