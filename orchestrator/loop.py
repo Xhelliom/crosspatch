@@ -52,7 +52,8 @@ class Loop:
         self.cfg = cfg
         self.run_id = cfg["run_id"]
         self.archive = Archive(
-            os.environ.get("CROSSPATCH_ARCHIVE") or cfg["archive_path"])
+            os.environ.get("CROSSPATCH_ARCHIVE") or cfg["archive_path"],
+            run_id=self.run_id)
         self.llm = LLM(cfg["model"], self.archive, cfg["max_usd"])
         self.runner = Runner(
             self.archive, cfg["sandbox_template"],
@@ -124,14 +125,19 @@ class Loop:
         """Consomme les intentions déposées par l'API depuis l'autre conteneur."""
         for key, verdict in self.archive.pending("verdict:"):
             gen_id = int(key.split(":", 1)[1])
+            # Consommée *avant* d'agir : `human_verdict` lance le soak en
+            # synchrone, et un worker tué pendant l'éval (redéploiement,
+            # OOM, base coupée) laissait l'intention en base. Au
+            # redémarrage l'évaluation entière était rejouée — microVM et
+            # tokens repayés. On échange « rejouer une dépense » contre
+            # « perdre une intention », et perdre une intention coûte un tap.
+            self.archive.clear_control(key)
             try:
                 self.human_verdict(gen_id, verdict)
             except Exception as e:                      # noqa: BLE001
                 self.archive.say(gen_id, "system", "error",
                                  f"verdict {verdict} impossible : {e}")
                 self.archive.update(gen_id, status="failed", note=f"verdict: {e}")
-            finally:
-                self.archive.clear_control(key)
 
         for key, target in self.archive.pending("rollback:"):
             gen_id = int(key.split(":", 1)[1])
@@ -362,7 +368,11 @@ class Loop:
 
         # --- gate humain sur la proposition (risque medium/high seulement)
         if v.needs_human:
-            self.archive.update(gen_id, status="awaiting_gate", note=v.reason)
+            # La note portait l'hypothèse de l'agent (`rationale`). Ne pas
+            # l'écraser : au moment de trancher, la question a besoin de ses
+            # deux moitiés — pourquoi ça remonte, et ce que l'agent voulait.
+            pourquoi = f"{v.reason} — {gen.note}" if gen.note else v.reason
+            self.archive.update(gen_id, status="awaiting_gate", note=pourquoi)
             self.archive.say(gen_id, "system", "verdict",
                              f"En attente d'autorisation ({v.risk}) : {v.reason}")
             return  # un verdict `ok` déclenchera l'évaluation

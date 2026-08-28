@@ -38,6 +38,9 @@ CREATE TABLE IF NOT EXISTS generations (
 CREATE TABLE IF NOT EXISTS spend (
   id       @PK@,
   gen_id   INTEGER,
+  run_id   TEXT,                     -- l'idéation dépense avant qu'une
+                                     -- génération existe : `gen_id` est
+                                     -- souvent NULL, `run_id` ne l'est pas
   kind     TEXT,                     -- llm | sandbox
   usd      @REAL@ NOT NULL,
   at       @REAL@ NOT NULL
@@ -115,6 +118,14 @@ class _Conn:
         for stmt in filter(str.strip, schema.split(";")):
             self.execute(stmt)
         self.commit()
+        # `spend.run_id` est arrivé après les premiers runs. SQLite n'a pas
+        # de `ADD COLUMN IF NOT EXISTS` : on tente, et l'échec — la colonne
+        # est déjà là — est le cas normal à partir du deuxième démarrage.
+        try:
+            self.execute("ALTER TABLE spend ADD COLUMN run_id TEXT")
+            self.commit()
+        except Exception:                               # noqa: BLE001
+            pass
 
     def execute(self, sql: str, params: tuple = ()):
         if self.postgres:
@@ -146,13 +157,18 @@ class Generation:
 
 
 class Archive:
-    def __init__(self, path: str = "data/archive.db"):
+    def __init__(self, path: str = "data/archive.db", run_id: str | None = None):
         """`path` est un chemin de fichier SQLite, ou une DSN Postgres.
 
         Un seul réglage pour les deux : `CROSSPATCH_ARCHIVE=postgresql://…`
         en cluster, un chemin en local, sans branche ailleurs dans le code.
+
+        `run_id` étiquette les dépenses. Le porter ici plutôt que de le
+        passer à `LLM` et à `Runner` évite deux signatures et deux endroits
+        où l'oublier : tout ce qu'un process dépense appartient à son run.
         """
         self.db = _Conn(path)
+        self.run_id = run_id
 
     # --- générations -----------------------------------------------------
     def add(self, g: Generation) -> int:
@@ -343,14 +359,30 @@ class Archive:
     # --- budget ----------------------------------------------------------
     def charge(self, gen_id: int | None, kind: str, usd: float) -> None:
         self.db.execute(
-            "INSERT INTO spend (gen_id,kind,usd,at) VALUES (?,?,?,?)",
-            (gen_id, kind, usd, time.time()),
+            "INSERT INTO spend (gen_id,run_id,kind,usd,at) VALUES (?,?,?,?,?)",
+            (gen_id, self.run_id, kind, usd, time.time()),
         )
         self.db.commit()
 
     def spent(self) -> float:
         r = self.db.execute("SELECT COALESCE(SUM(usd),0) AS t FROM spend").fetchone()
         return r["t"]
+
+    def par_nature(self, run_id: str | None = None) -> dict[str, dict[str, float]]:
+        """Dépense ventilée par nature — `llm` d'un côté, `sandbox` de l'autre.
+
+        Le total seul ne dit pas où part l'argent. `n` compte les lignes de
+        facturation : pour `sandbox`, c'est le nombre de microVM E2B
+        démarrées, la seule mesure qu'on ait de ce que le soak consomme
+        réellement (`soak_runs` par génération évaluée), tous runs confondus
+        ou du seul run demandé. Sans `run_id`, toute l'archive : c'est le
+        périmètre de `spent()`, donc celui du plafond.
+        """
+        where, params = ("WHERE run_id=?", (run_id,)) if run_id else ("", ())
+        return {r["kind"]: {"n": r["n"], "usd": round(r["usd"], 6)}
+                for r in self.db.execute(
+                    "SELECT kind, COUNT(*) AS n, COALESCE(SUM(usd),0) AS usd "
+                    f"FROM spend {where} GROUP BY kind", params)}
 
     # --- fil de discussion ----------------------------------------------
     def say(self, gen_id: int | None, actor: str, kind: str, body: str) -> None:

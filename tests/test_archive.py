@@ -165,6 +165,38 @@ def test_spend_vide_vaut_zero(archive):
     assert archive.spent() == 0.0
 
 
+def test_par_nature_ventile_et_compte(archive):
+    """`n` est le nombre de microVM E2B démarrées, pas leur coût."""
+    g = _gen(archive)
+    archive.charge(g, "llm", 0.25)
+    archive.charge(g, "sandbox", 0.10)
+    archive.charge(g, "sandbox", 0.20)
+    v = archive.par_nature()
+    assert v["llm"] == {"n": 1, "usd": pytest.approx(0.25)}
+    assert v["sandbox"] == {"n": 2, "usd": pytest.approx(0.30)}
+
+
+def test_par_nature_vide(archive):
+    assert archive.par_nature() == {}
+
+
+def test_par_nature_filtre_sur_le_run(adresse_archive):
+    """L'idéation dépense avant qu'une génération existe : `gen_id` est
+    NULL, `run_id` ne l'est pas. C'est ce qui rend la facture attribuable."""
+    a = Archive(adresse_archive, run_id="R1")
+    a.charge(None, "llm", 0.10)          # idéation : aucune génération
+    a.charge(None, "sandbox", 0.01)
+    b = Archive(adresse_archive, run_id="R2")
+    b.charge(None, "llm", 0.50)
+    assert a.par_nature("R1") == {"llm": {"n": 1, "usd": pytest.approx(0.10)},
+                                  "sandbox": {"n": 1, "usd": pytest.approx(0.01)}}
+    assert a.par_nature("R2") == {"llm": {"n": 1, "usd": pytest.approx(0.50)}}
+    # sans filtre : le périmètre du plafond, tous runs confondus
+    assert a.par_nature()["llm"]["usd"] == pytest.approx(0.60)
+    assert a.spent() == pytest.approx(0.61)
+    a.db.close(); b.db.close()
+
+
 # --- plan de contrôle ------------------------------------------------------
 
 def test_control_ecrit_puis_relit(archive):

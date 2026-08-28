@@ -39,6 +39,21 @@ def auth(authorization: str = Header("")) -> None:
         raise HTTPException(401, "jeton invalide")
 
 
+def _sandbox() -> dict:
+    """Ce que le soak consomme en E2B : template, tarif, microVM démarrées."""
+    vu = archive.par_nature(cfg["run_id"]).get("sandbox", {"n": 0, "usd": 0.0})
+    tarif = cfg.get("sandbox_usd_per_hour", 0.0)
+    return {
+        "template": cfg.get("sandbox_template", "base"),
+        "usd_per_hour": tarif,
+        "soak_runs": cfg["soak_runs"],
+        "microvm": vu["n"],
+        "usd": vu["usd"],
+        "secondes_moyennes": (round(vu["usd"] / tarif * 3600 / vu["n"], 1)
+                              if tarif and vu["n"] else None),
+    }
+
+
 @app.get("/state", dependencies=[Depends(auth)])
 def state() -> dict:
     best = archive.best(cfg["run_id"])
@@ -59,6 +74,12 @@ def state() -> dict:
         "stopped": archive.flag("stop"),
         "spent_usd": round(archive.spent(), 4),
         "max_usd": cfg["max_usd"],
+        "depense": archive.par_nature(cfg["run_id"]),
+        # Les microVM E2B sont la moitié invisible de la facture : elles
+        # n'apparaissaient que fondues dans `spent_usd`. `secondes_moyennes`
+        # est déduit du tarif, pas mesuré — il vaut ce que vaut
+        # `sandbox_usd_per_hour`, à recaler sur la facture réelle.
+        "sandbox": _sandbox(),
         "best": dict(best) if best else None,
         "reussite": {"reference": reference, "courant": courant,
                      "delta": (None if courant is None or reference is None

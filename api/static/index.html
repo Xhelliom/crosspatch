@@ -13,6 +13,7 @@
   --ground:#10131A; --raised:#171B24; --edge:#242A36;
   --a:#8B9AF5; --b:#58BFA6; --bone:#E8E4DA; --mute:#7A8395;
   --alarm:#D9788C;
+  --nav:320px;
   --mono:'JetBrains Mono',ui-monospace,monospace;
   --display:'Bricolage Grotesque',system-ui,sans-serif;
 }
@@ -53,6 +54,10 @@ header{
 .rail::-webkit-scrollbar{display:none}
 .notch{flex:0 0 7px;border-radius:1px 1px 0 0;min-height:2px;transition:height .3s}
 .notch.A{background:var(--a)} .notch.B{background:var(--b)}
+/* La mesure de référence n'est ni A ni B : sans règle, elle n'avait aucun
+   fond et disparaissait du rail — le plancher des deltas était le seul
+   point invisible du graphe. */
+.notch.baseline{background:var(--mute)}
 .notch.dead{background:none;border:1px solid var(--edge);height:8px!important}
 .notch.wait{background:repeating-linear-gradient(45deg,var(--bone) 0 2px,transparent 2px 4px)}
 
@@ -209,6 +214,31 @@ form.newdir textarea{min-height:64px}
 }
 .state b{color:var(--bone);font-weight:500}
 
+/* ---- desktop : le panneau devient une colonne, pas un calque ----
+   En mobile c'est une feuille qu'on tire par-dessus le fil, parce qu'il n'y
+   a de la place que pour une chose à la fois. À partir de 900 px il y a la
+   place pour les deux, et cacher le pilotage derrière un bouton n'a plus de
+   raison d'être. Même DOM, même JS, mêmes endpoints : seule la mise en page
+   change — l'invariant de parité ne se joue pas ici. */
+@media(min-width:900px){
+  body{padding-left:var(--nav)}
+  .sheet{
+    right:auto;width:var(--nav);border-right:1px solid var(--edge);
+    transform:none;visibility:visible;
+  }
+  .sheet header{padding-top:14px}
+  /* Plus rien à ouvrir ni à fermer : la colonne est toujours là. */
+  #open,#close{display:none}
+  /* Les onglets s'empilent : c'est ce qui en fait une navbar plutôt qu'une
+     rangée de boutons comprimée dans 320 px. */
+  .tabs{flex-direction:column;gap:3px}
+  .tabs button{flex:none;text-align:left;padding:9px 11px}
+  .tabs button[aria-selected="true"]{background:var(--raised)}
+  .gate{left:var(--nav)}
+  /* Une ligne de fil sur 1900 px ne se lit pas. */
+  main{max-width:820px}
+}
+
 @media(prefers-reduced-motion:reduce){*{transition:none!important}}
 </style>
 </head>
@@ -290,6 +320,14 @@ form.newdir textarea{min-height:64px}
       <div class="state"><span>modèle</span><b id="ctlmodel">—</b></div>
       <div class="state"><span>dépensé / plafond</span><b id="ctlspend">—</b></div>
       <div class="state"><span>acceptation A / B</span><b id="ctlaccept">—</b></div>
+
+      <p class="hint" style="margin-top:14px">Sandbox E2B — une microVM par
+        run de soak, facturée à la seconde. Compteurs sur ce run ;
+        « dépensé / plafond » couvre toute l'archive.</p>
+      <div class="state"><span>template / soak</span><b id="e2btpl">—</b></div>
+      <div class="state"><span>microVM démarrées</span><b id="e2bvm">—</b></div>
+      <div class="state"><span>durée moyenne</span><b id="e2bdur">—</b></div>
+      <div class="state"><span>coût modèle / sandbox</span><b id="e2bsplit">—</b></div>
       <p class="hint" style="margin-top:14px">Générations intégrées —
         annulables par <code>git revert</code>.</p>
       <div id="completed"></div>
@@ -315,6 +353,13 @@ if (!token) { token = prompt("Jeton de contrôle") || ""; sessionStorage.setItem
 const H = { Authorization: "Bearer " + token };
 const JH = { ...H, "Content-Type": "application/json" };
 let pending = null, cursor = 0, seeded = false, last = null;
+const large = matchMedia("(min-width:900px)");   // la colonne latérale
+let dernierTour = null;
+// Le worker ne consomme le verdict qu'entre deux itérations — et une éval
+// dure des minutes. Sans cette mémoire, le `poll()` qui suit la réponse
+// retrouve la génération encore en attente et rouvre la question à
+// laquelle on vient de répondre.
+let repondu = null;
 
 const get = p => fetch(p, { headers: H }).then(r => r.json());
 const post = (p, body) => fetch(p, { method: "POST", headers: JH, body: JSON.stringify(body) });
@@ -354,9 +399,17 @@ async function poll() {
     $("#spend").textContent = "$" + s.spent_usd.toFixed(2);
     $("#spendbox").classList.toggle("hot", s.spent_usd > s.max_usd * 0.8);
     drawRail(s.recent);
-    setGate(s.awaiting_human[0] || null);
+    const attente = s.awaiting_human[0] || null;
+    setGate(attente && attente.id === repondu ? null : attente);
     setHalt(s.paused, s.stopped);
     drawControl(s);
+    // En desktop la colonne est toujours ouverte, donc `openSheet` — qui
+    // portait le rafraîchissement des listes — n'est plus jamais appelé.
+    // On recharge quand un tour a bougé, pas à chaque poll.
+    if (large.matches && s.recent[0]?.id !== dernierTour) {
+      dernierTour = s.recent[0]?.id;
+      refreshPanes();
+    }
   } catch (e) { /* le worker peut être à l'arrêt : on réessaie */ }
 }
 
@@ -368,7 +421,11 @@ function drawRail(recent) {
     const dead = ["failed", "rejected"].includes(g.status);
     const wait = ["awaiting_human", "awaiting_gate"].includes(g.status);
     n.className = "notch " + g.role_proposer + (dead ? " dead" : wait ? " wait" : "");
-    const p = g.scores ? JSON.parse(g.scores).pass_rate : 0;
+    // `scores` vaut "{}" tant que l'éval n'a pas tourné : `pass_rate` est
+    // alors `undefined`, et `undefined * 42` donnait `height:NaNpx` —
+    // déclaration invalide, encoche écrasée sur 2 px au lieu d'être
+    // hachurée. C'est l'état « en attente » qui devenait invisible.
+    const p = (g.scores ? JSON.parse(g.scores).pass_rate : 0) || 0;
     n.style.height = dead ? "8px" : Math.max(4, p * 42) + "px";
     n.title = `#${g.id} · ${g.role_proposer} · ${g.status}`;
     rail.appendChild(n);
@@ -437,8 +494,12 @@ function setGate(g) {
 $$(".acts button").forEach(b => b.onclick = async () => {
   if (!pending) return;
   const id = pending.id;
+  repondu = id;
   setGate(null);
-  await post("/verdict/" + id, { verdict: b.dataset.v });
+  const r = await post("/verdict/" + id, { verdict: b.dataset.v });
+  // Si l'intention n'est pas partie, la question doit revenir : c'est le
+  // seul cas où rouvrir est le bon comportement.
+  if (!r || !r.ok) repondu = null;
   poll();
 });
 
@@ -546,6 +607,16 @@ function drawControl(s) {
   $("#ctlspend").textContent = `$${s.spent_usd.toFixed(2)} / $${s.max_usd}`;
   const a = s.acceptance_rate || {};
   $("#ctlaccept").textContent = `${pct(a.A)} / ${pct(a.B)} (n=${a.n ?? 0})`;
+
+  // Les microVM sont la moitié invisible de la facture : `dépensé` les
+  // fondait dans le total, sans dire si c'est le modèle ou le soak qui
+  // dérive. `durée moyenne` est déduite du tarif, pas chronométrée.
+  const sb = s.sandbox || {}, dep = s.depense || {};
+  $("#e2btpl").textContent = `${sb.template || "—"} · ${sb.soak_runs ?? "—"}× par éval`;
+  $("#e2bvm").textContent = sb.microvm ?? "—";
+  $("#e2bdur").textContent = sb.secondes_moyennes ? `${sb.secondes_moyennes} s` : "—";
+  $("#e2bsplit").textContent =
+    `$${(dep.llm?.usd ?? 0).toFixed(3)} / $${(dep.sandbox?.usd ?? 0).toFixed(3)}`;
 
   const box = $("#completed");
   box.innerHTML = "";

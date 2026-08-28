@@ -46,22 +46,37 @@ MUTABLE = (
 #   - `eval\(` attrapait `ast.literal_eval(`, qui est la parade, pas l'abus.
 #   - `BUDGET` en IGNORECASE attrapait toute prose française contenant
 #     « budget » — le sujet même de DIR-002.
+# Chaque motif porte la phrase que l'humain lira au moment de trancher.
+# Ce n'est pas de la décoration : la question arrive sur un téléphone, et
+# `motifs à revoir : ['^[+-].*\\b(?:AGENT_)?MODEL\\b']` n'est pas une
+# question — c'est un `repr` de regex. On ne peut pas répondre oui ou non à
+# ça sans aller lire le diff à la main, ce qui est exactement ce que le
+# pilotage au téléphone ne permet pas.
 SUSPICIOUS = (
-    re.compile(r"\bPROTECTED\b"),
-    re.compile(r"\bpass_rate\s*=\s*[\d.]"),        # score écrit en dur
-    re.compile(r"\bos\.system\s*\("),                # jamais légitime
-    re.compile(r"shell\s*=\s*True"),                 # chaîne shell interprétée
-    re.compile(r"(?<![\w.])(?:eval|exec)\s*\("),      # pas literal_eval
-    re.compile(r"\b(?:BUDGET|max_usd|max_spend)\b"),  # toucher au plafond
-    re.compile(r"\.\./"),                            # échappement de chemin
-    re.compile(r"\bCONTROL_TOKEN\b"),                 # jeton de contrôle
+    (re.compile(r"\bPROTECTED\b"),
+     "touche à la liste des chemins protégés"),
+    (re.compile(r"\bpass_rate\s*=\s*[\d.]"),
+     "écrit un score en dur"),
+    (re.compile(r"\bos\.system\s*\("),
+     "lance une commande système"),
+    (re.compile(r"shell\s*=\s*True"),
+     "exécute une chaîne shell interprétée"),
+    (re.compile(r"(?<![\w.])(?:eval|exec)\s*\("),
+     "évalue du code à la volée (eval/exec)"),
+    (re.compile(r"\b(?:BUDGET|max_usd|max_spend)\b"),
+     "touche au plafond de dépense"),
+    (re.compile(r"\.\./"),
+     "remonte hors de son répertoire (../)"),
+    (re.compile(r"\bCONTROL_TOKEN\b"),
+     "touche au jeton de contrôle"),
     # Le modèle des agents est milieu de gamme *délibérément* : le headroom
     # est le sujet de l'expérience. Un patch d'une ligne sur `MODEL` ferait
     # bondir le pass_rate sans rien améliorer. Non interdit — c'est une
     # décision humaine, pas la leur — mais jamais silencieux.
     # Ancré sur `^[+-]` : `agent.py` contient déjà `"model": MODEL`, et sans
     # cet ancrage tout patch de `_complete` remonterait sur son contexte.
-    re.compile(r"^[+-].*\b(?:AGENT_)?MODEL\b", re.M),
+    (re.compile(r"^[+-].*\b(?:AGENT_)?MODEL\b", re.M),
+     "touche au choix du modèle de l'agent"),
 )
 
 
@@ -82,9 +97,9 @@ def classify(paths: list[str], diff_text: str) -> Verdict:
         if not any(norm.startswith(x) for x in MUTABLE):
             return Verdict(False, f"hors zone modifiable : {p}", "medium", True)
 
-    hits = [r.pattern for r in SUSPICIOUS if r.search(diff_text)]
+    hits = [quoi for motif, quoi in SUSPICIOUS if motif.search(diff_text)]
     if hits:
-        return Verdict(True, f"motifs à revoir : {hits}", "high", True)
+        return Verdict(True, " ; ".join(hits), "high", True)
 
     # Toucher au prompt d'un agent ou à la boucle = revue humaine.
     sensitive = ("orchestrator/loop.py", "orchestrator/prompts/")
