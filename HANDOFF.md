@@ -42,7 +42,7 @@ Trois niveaux de décision :
 |---|---|---|
 | Mission | `mission/OBJECTIVE.md` | humain, gelé pendant un run |
 | Grandes idées | `mission/DIRECTIONS.yaml` | humain surtout ; l'IA propose, l'humain valide |
-| Tâches | `mission/BACKLOG.yaml` | IA seule, en continu |
+| Tâches | backlog (archive, `documents`) | IA seule, en continu |
 
 Un tour = idéation (l'agent écrit ses propres tâches à partir des échecs
 observés) puis implémentation (un diff unique sur l'item le mieux classé).
@@ -264,7 +264,7 @@ Ces choix sont délibérés et vont sembler faux. Ne les « corrige » pas.
 - Le modèle des agents est **volontairement milieu de gamme**. Passer à un
   modèle plus fort améliorerait les scores et supprimerait l'expérience.
 - L'agent graine (`orchestrator/agent.py`) est **volontairement naïf**.
-- `BACKLOG.yaml` part **vide**. Ne le seede pas : ce que les agents trouvent,
+- le backlog part **vide**. Ne le seede pas : ce que les agents trouvent,
   ou ne trouvent pas, est le résultat.
 - La convergence par doublons (75 % d'idées déjà connues sur 3 tours) est un
   **résultat**, pas une panne. Ne monte pas la température pour la contourner.

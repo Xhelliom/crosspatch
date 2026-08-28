@@ -36,7 +36,7 @@ Un humain arbitre par oui / non, il ne note pas la qualité.
 |---|---|---|---|
 | Mission | `mission/OBJECTIVE.md` | humain | non — gelé, sinon plus rien n'est comparable |
 | Grandes idées | `mission/DIRECTIONS.yaml` | humain surtout ; l'IA propose, l'humain valide | oui — c'est le volant |
-| Tâches | `mission/BACKLOG.yaml` | IA seule | oui, en continu |
+| Tâches | backlog, dans l'archive | IA seule | oui, en continu |
 
 L'humain ouvre les terrains, l'IA les explore. Une tâche non rattachée à une
 direction active est écartée à l'ingestion. Une direction proposée par un agent
@@ -51,9 +51,15 @@ seule l'API l'écrit.
 - **`harness/tasks/`** = l'étalon de mesure. Écrit par l'humain, gelé pour la
   durée d'un run, immuable pour les agents. Sans mètre fixe, aucune génération
   n'est comparable. On n'ajoute pas de tâche en cours de run.
-- **`mission/BACKLOG.yaml`** = les idées d'amélioration. **Généré par les
-  agents** en phase d'idéation. Ne jamais le seeder à la main : ce que les
-  agents trouvent — ou ne trouvent pas — *est* le résultat de l'expérience.
+- **le backlog** = les idées d'amélioration. **Généré par les agents** en
+  phase d'idéation. Ne jamais le seeder à la main : ce que les agents
+  trouvent — ou ne trouvent pas — *est* le résultat de l'expérience.
+  Il vit dans l'archive (`documents`, clé `BACKLOG.yaml`), pas dans un
+  fichier : c'est un état que le worker écrit et que l'API sert, et les deux
+  sont des conteneurs distincts. Tant qu'il était un fichier de `/app`,
+  chacun lisait le sien — `/backlog` a servi le fichier vide de l'image
+  pendant tous les premiers runs — et un `docker build` le remettait à zéro,
+  ce qui vidait `known` et rendait la déduplication aveugle.
 
 ## Le tour, en deux phases
 
@@ -76,7 +82,8 @@ harness/       immuable — tâches et scoring, monté en lecture seule en sandb
 orchestrator/  mutable  — boucle, client OpenRouter, client E2B, backlog
 api/           mutable  — FastAPI : /state /backlog /verdict /control /stream
 mcp/           mutable  — serveur MCP, l'interface de cette session
-mission/       OBJECTIVE.md (gelé) + BACKLOG.yaml (géré par les agents)
+mission/       OBJECTIVE.md (gelé) + DIRECTIONS.yaml (écrit par l'API)
+               le backlog, lui, est dans l'archive — état partagé
 ```
 
 Control plane en un conteneur, exécution déléguée à E2B. Même code path en
@@ -85,7 +92,10 @@ local (`docker compose up`) et en cloud (`git push`).
 **L'API et le worker ne partagent aucune mémoire** : ce sont deux conteneurs.
 L'API écrit des intentions dans la table `control` de l'archive
 (`paused`, `stop`, `verdict:<gen>`, `rollback:<gen>`), le worker les relit à
-chaque itération et reste seul à exécuter quoi que ce soit. Ne pas répondre à
+chaque itération et reste seul à exécuter quoi que ce soit. Tout ce que les
+deux doivent voir identique passe par l'archive — les intentions par
+`control`, le backlog par `documents`. Rien par un fichier de `/app` : il y
+en a deux copies, et aucune ne survit à un redéploiement. Ne pas répondre à
 un problème de synchronisation en fusionnant les deux services : la séparation
 web / worker est ce qui permet le scale-to-zero en cloud.
 
